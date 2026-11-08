@@ -1,0 +1,23 @@
+{
+  "name": "pos-desktop",
+  "version": "1.0.0",
+  "description": "Sistema Punto de Venta (POS) con HTML, CSS, JS, Supabase y Capacitor",
+  "main": "www/index.html",
+  "scripts": {
+    "start": "node server.js",
+    "server": "node server.js",
+    "sync": "cap sync",
+    "open:android": "cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.6.9",
+    "@capacitor/core": "^7.6.9",
+    "@supabase/supabase-js": "^2.48.1",
+    "express": "^5.3.0",
+    "html5-qrcode": "^2.3.8",
+    "mysql2": "^3.24.6"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.3"
+  }
+}

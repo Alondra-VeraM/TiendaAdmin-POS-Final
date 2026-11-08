@@ -1,0 +1,13 @@
+{
+  "appId": "com.pos.retail",
+  "appName": "Lector POS",
+  "webDir": "www",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}

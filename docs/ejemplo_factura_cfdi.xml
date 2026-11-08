@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Factura CFDI 4.0 de ejemplo para probar "Recibir mercancía > Factura XML" -->
+<cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" xmlns:tfd="http://www.sat.gob.mx/TimbreFiscalDigital"
+  Version="4.0" Serie="A" Folio="10234" Fecha="2026-11-02T08:30:00" SubTotal="1488.00" Total="1726.08" Moneda="MXN" TipoDeComprobante="I">
+  <cfdi:Emisor Rfc="DMI000101AAA" Nombre="DISTRIBUIDORA DE LACTEOS Y BEBIDAS SA DE CV" RegimenFiscal="601"/>
+  <cfdi:Receptor Rfc="XAXX010101000" Nombre="TIENDA ABARROTES NEXUS" UsoCFDI="G01"/>
+  <cfdi:Conceptos>
+    <!-- Código de CAJA: suma 2 x 12 = 24 litros de leche, costo por pieza = 264/12 -->
+    <cfdi:Concepto ClaveProdServ="50131700" NoIdentificacion="17501820511231" Cantidad="2" ClaveUnidad="XBX" Unidad="Caja" Descripcion="LECHE LALA ENTERA 1L CAJA C/12" ValorUnitario="264.00" Importe="528.00" ObjetoImp="01"/>
+    <!-- Código de PIEZA: suma 48 refrescos -->
+    <cfdi:Concepto ClaveProdServ="50202306" NoIdentificacion="750185538472" Cantidad="48" ClaveUnidad="H87" Unidad="Pieza" Descripcion="COCA-COLA ORIGINAL 600ML" ValorUnitario="13.50" Importe="648.00" ObjetoImp="01"/>
+    <!-- Código del proveedor que NO existe en el inventario: se elige el producto a mano -->
+    <cfdi:Concepto ClaveProdServ="50202301" NoIdentificacion="PROV-AG15" Cantidad="24" ClaveUnidad="H87" Unidad="Pieza" Descripcion="AGUA CIEL 1.5L" ValorUnitario="13.00" Importe="312.00" ObjetoImp="01"/>
+  </cfdi:Conceptos>
+  <cfdi:Complemento>
+    <tfd:TimbreFiscalDigital Version="1.1" UUID="6F1A2B3C-4D5E-4F60-8A9B-0C1D2E3F4A5B" FechaTimbrado="2026-11-02T08:31:00"/>
+  </cfdi:Complemento>
+</cfdi:Comprobante>
+

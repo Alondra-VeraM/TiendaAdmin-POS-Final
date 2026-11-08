@@ -1,0 +1,294 @@
+/**
+ * APLICACIÓN PUNTO DE VENTA (POS) & GESTIÓN DE INVENTARIO
+ * Controlador principal, orquestador de módulos, navegación y sincronización de datos
+ */
+
+// =========================================================================
+// DELEGACIONES GLOBALES PARA LLAMADAS CRUZADAS ENTRE MÓDULOS
+// =========================================================================
+var showModal = function(title, msg) { if (window.showModal && window.showModal !== showModal) return window.showModal(title, msg); };
+var renderInventory = function() { if (window.renderInventory && window.renderInventory !== renderInventory) return window.renderInventory(); };
+var renderSalesHistory = function() { if (window.renderSalesHistory && window.renderSalesHistory !== renderSalesHistory) return window.renderSalesHistory(); };
+var renderCashCut = function() { if (window.renderCashCut && window.renderCashCut !== renderCashCut) return window.renderCashCut(); };
+var renderCart = function() { if (window.renderCart && window.renderCart !== renderCart) return window.renderCart(); };
+var calculateTotals = function() { if (window.calculateTotals && window.calculateTotals !== calculateTotals) return window.calculateTotals(); };
+var addProductToCart = function(p, q) { if (window.addProductToCart && window.addProductToCart !== addProductToCart) return window.addProductToCart(p, q); };
+var handleProductScan = function(c) { if (window.handleProductScan && window.handleProductScan !== handleProductScan) return window.handleProductScan(c); };
+var openTicketModal = function(t) { if (window.openTicketModal && window.openTicketModal !== openTicketModal) return window.openTicketModal(t); };
+var triggerCheckout = function() { if (window.triggerCheckout && window.triggerCheckout !== triggerCheckout) return window.triggerCheckout(); };
+var updateCashChange = function() { if (window.updateCashChange && window.updateCashChange !== updateCashChange) return window.updateCashChange(); };
+var playPosScanBeep = function() { if (window.playPosScanBeep && window.playPosScanBeep !== playPosScanBeep) return window.playPosScanBeep(); };
+var showPosToast = function(m) { if (window.showPosToast && window.showPosToast !== showPosToast) return window.showPosToast(m); };
+var openQuickServiceModal = function(s) { if (window.openQuickServiceModal && window.openQuickServiceModal !== openQuickServiceModal) return window.openQuickServiceModal(s); };
+var updateSuspendedBadge = function() { if (window.updateSuspendedBadge && window.updateSuspendedBadge !== updateSuspendedBadge) return window.updateSuspendedBadge(); };
+var suspendCurrentSale = function() { if (window.suspendCurrentSale && window.suspendCurrentSale !== suspendCurrentSale) return window.suspendCurrentSale(); };
+var handleInventoryBarcodeScan = function(b) { if (window.handleInventoryBarcodeScan && window.handleInventoryBarcodeScan !== handleInventoryBarcodeScan) return window.handleInventoryBarcodeScan(b); };
+var isInventoryViewActive = function() { if (window.isInventoryViewActive && window.isInventoryViewActive !== isInventoryViewActive) return window.isInventoryViewActive(); };
+var openShrinkageModal = function(p) { if (window.openShrinkageModal && window.openShrinkageModal !== openShrinkageModal) return window.openShrinkageModal(p); };
+var getProductIconSvg = function(i) { if (window.getProductIconSvg && window.getProductIconSvg !== getProductIconSvg) return window.getProductIconSvg(i); };
+
+// =========================================================================
+// GESTIÓN DE SESIÓN Y VISTAS
+// =========================================================================
+
+// Función global de cambio de vista
+window.switchView = function(viewName) {
+  if (viewName !== 'pos') {
+    if (window.currentSessionUser && window.currentSessionUser.role === 'cajero') {
+      if (typeof window.requestAdminAuth === 'function') {
+        window.requestAdminAuth(() => executeSwitchView(viewName));
+        return;
+      }
+    }
+  }
+  executeSwitchView(viewName);
+};
+
+function executeSwitchView(viewName) {
+  window.currentActiveView = viewName;
+  if (typeof window.setAppStateView === 'function') {
+    window.setAppStateView(viewName);
+  }
+
+  const posViewContainer = document.getElementById('posViewContainer');
+  const inventoryViewContainer = document.getElementById('inventoryViewContainer');
+  const salesHistoryViewContainer = document.getElementById('salesHistoryViewContainer');
+  const cashCutViewContainer = document.getElementById('cashCutViewContainer');
+  const navPosBtn = document.getElementById('navPosBtn');
+  const navInventoryBtn = document.getElementById('navInventoryBtn');
+  const navSalesHistoryBtn = document.getElementById('navSalesHistoryBtn');
+  const navCashCutBtn = document.getElementById('navCashCutBtn');
+  const allNavLinks = document.querySelectorAll('.sidebar-menu .nav-link');
+
+  allNavLinks.forEach(link => {
+    link.classList.remove('active');
+    link.classList.remove('nav-active');
+  });
+
+  if (viewName === 'inventory') {
+    if (posViewContainer) posViewContainer.style.display = 'none';
+    if (salesHistoryViewContainer) salesHistoryViewContainer.style.display = 'none';
+    if (cashCutViewContainer) cashCutViewContainer.style.display = 'none';
+    if (inventoryViewContainer) inventoryViewContainer.style.display = 'flex';
+    if (navInventoryBtn) navInventoryBtn.classList.add('active', 'nav-active');
+    if (typeof window.renderInventory === 'function') {
+      window.renderInventory();
+    }
+    if (typeof window.refreshInventoryFromSupabase === 'function') {
+      window.refreshInventoryFromSupabase();
+    }
+    const invSearchInput = document.getElementById('invSearchInput');
+    if (invSearchInput) invSearchInput.focus();
+  } else if (viewName === 'sales-history') {
+    if (posViewContainer) posViewContainer.style.display = 'none';
+    if (inventoryViewContainer) inventoryViewContainer.style.display = 'none';
+    if (cashCutViewContainer) cashCutViewContainer.style.display = 'none';
+    if (salesHistoryViewContainer) salesHistoryViewContainer.style.display = 'flex';
+    if (navSalesHistoryBtn) navSalesHistoryBtn.classList.add('active', 'nav-active');
+    if (typeof window.renderSalesHistory === 'function') {
+      window.renderSalesHistory();
+    }
+    if (typeof window.refreshSalesFromSupabase === 'function') {
+      window.refreshSalesFromSupabase();
+    }
+    const historySearchInput = document.getElementById('historySearchInput');
+    if (historySearchInput) historySearchInput.focus();
+  } else if (viewName === 'cash-cut') {
+    if (posViewContainer) posViewContainer.style.display = 'none';
+    if (inventoryViewContainer) inventoryViewContainer.style.display = 'none';
+    if (salesHistoryViewContainer) salesHistoryViewContainer.style.display = 'none';
+    if (cashCutViewContainer) cashCutViewContainer.style.display = 'flex';
+    if (navCashCutBtn) navCashCutBtn.classList.add('active', 'nav-active');
+    if (typeof window.renderCashCut === 'function') {
+      window.renderCashCut();
+    }
+    const inputEfectivoContado = document.getElementById('inputEfectivoContado');
+    if (inputEfectivoContado) inputEfectivoContado.focus();
+  } else {
+    // POS View
+    if (inventoryViewContainer) inventoryViewContainer.style.display = 'none';
+    if (salesHistoryViewContainer) salesHistoryViewContainer.style.display = 'none';
+    if (cashCutViewContainer) cashCutViewContainer.style.display = 'none';
+    if (posViewContainer) posViewContainer.style.display = 'flex';
+    if (navPosBtn) navPosBtn.classList.add('active');
+    const cartBarcodeInput = document.getElementById('cartBarcodeInput');
+    if (cartBarcodeInput) cartBarcodeInput.focus();
+  }
+}
+
+window.executeSwitchView = executeSwitchView;
+
+// =========================================================================
+// SERVICIO DE DATOS Y ESTADO GLOBAL COMPARTIDO
+// =========================================================================
+
+window.PosApp = window.PosApp || {};
+
+const dataService = window.PosDataService || {
+  getInventoryProducts: () => window.INITIAL_INVENTORY || [],
+  saveInventoryProducts: (p) => p,
+  getSalesHistory: () => window.INITIAL_SALES_HISTORY || [],
+  saveSalesHistory: (s) => s,
+  findProductByBarcode: async (c) => null,
+  searchProducts: async (t) => [],
+  registerSale: async () => ({ success: true })
+};
+
+window.PosApp.dataService = dataService;
+
+// Listas globales compartidas
+window.PosApp.inventoryList = (dataService.getInventoryProducts && dataService.getInventoryProducts()) || window.INITIAL_INVENTORY || [];
+window.PosApp.salesHistoryList = (dataService.getSalesHistory && dataService.getSalesHistory()) || window.INITIAL_SALES_HISTORY || [];
+
+// Conexión transparente para cualquier referencia global a inventoryList y salesHistoryList
+Object.defineProperty(window, 'inventoryList', {
+  get: () => window.PosApp.inventoryList,
+  set: (val) => { window.PosApp.inventoryList = val; },
+  configurable: true
+});
+
+Object.defineProperty(window, 'salesHistoryList', {
+  get: () => window.PosApp.salesHistoryList,
+  set: (val) => { window.PosApp.salesHistoryList = val; },
+  configurable: true
+});
+
+// Sincronización asíncrona con Supabase
+async function refreshInventoryFromSupabase() {
+  if (dataService && typeof dataService.fetchProducts === 'function') {
+    const items = await dataService.fetchProducts();
+    if (items && Array.isArray(items) && items.length > 0) {
+      window.PosApp.inventoryList = items;
+      if (typeof window.renderInventory === 'function') window.renderInventory();
+    }
+  }
+}
+window.refreshInventoryFromSupabase = refreshInventoryFromSupabase;
+
+async function refreshSalesFromSupabase() {
+  if (dataService && typeof dataService.fetchSales === 'function') {
+    const sales = await dataService.fetchSales();
+    window.PosApp.salesHistoryList = Array.isArray(sales) ? sales : [];
+    if (typeof window.renderSalesHistory === 'function') window.renderSalesHistory();
+    if (typeof window.renderCashCut === 'function') window.renderCashCut();
+  }
+}
+window.refreshSalesFromSupabase = refreshSalesFromSupabase;
+
+// Carga inicial directa desde Supabase
+refreshInventoryFromSupabase();
+refreshSalesFromSupabase();
+
+// Escuchar sincronización en tiempo real desde Supabase
+window.addEventListener('supabase:data-synced', (e) => {
+  if (e.detail && Array.isArray(e.detail.products) && e.detail.products.length > 0) {
+    window.PosApp.inventoryList = e.detail.products;
+    if (typeof window.renderInventory === 'function') window.renderInventory();
+  }
+  if (e.detail && Array.isArray(e.detail.sales)) {
+    const today = new Date();
+    const todayDateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    window.PosApp.salesHistoryList = e.detail.sales.filter(s => s && s.created_at && s.created_at.startsWith(todayDateStr));
+    if (typeof window.renderSalesHistory === 'function') window.renderSalesHistory();
+    if (typeof window.renderCashCut === 'function') window.renderCashCut();
+  }
+});
+
+// Reloj en tiempo real
+function updateClock() {
+  const now = new Date();
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const liveClock = document.getElementById('liveClock');
+  if (liveClock) liveClock.textContent = `${hours}:${minutes}`;
+  const dropdownLiveClock = document.getElementById('dropdownLiveClock');
+  if (dropdownLiveClock) dropdownLiveClock.textContent = `${hours}:${minutes} hrs`;
+}
+updateClock();
+setInterval(updateClock, 1000);
+
+// Modal de alerta general
+function showModal(title, message) {
+  const appModal = document.getElementById('appModal');
+  const modalTitle = document.getElementById('modalTitle');
+  const modalBody = document.getElementById('modalBody');
+  if (modalTitle) modalTitle.textContent = title;
+  if (modalBody) modalBody.textContent = message;
+  if (appModal) appModal.style.display = 'flex';
+}
+
+window.showModal = showModal;
+
+// =========================================================================
+// ORQUESTADOR DE INICIALIZACIÓN
+// =========================================================================
+function initApp() {
+  // Configuración de modal general
+  const appModal = document.getElementById('appModal');
+  const modalCloseBtn = document.getElementById('modalCloseBtn');
+  if (modalCloseBtn) {
+    modalCloseBtn.addEventListener('click', () => {
+      if (appModal) appModal.style.display = 'none';
+    });
+  }
+  if (appModal) {
+    appModal.addEventListener('click', (e) => {
+      if (e.target === appModal) appModal.style.display = 'none';
+    });
+  }
+
+  // 1. Inicializar Login y autenticación
+  if (typeof window.initLoginAuth === 'function') window.initLoginAuth();
+
+  // 2. Inicializar Módulos de la Aplicación
+  if (typeof window.initInventory === 'function') window.initInventory();
+  if (typeof window.initSalesHistory === 'function') window.initSalesHistory();
+  if (typeof window.initCutCash === 'function') window.initCutCash();
+
+  // 3. Inicializar Punto de Venta (POS) y sus submódulos
+  if (typeof window.initPos === 'function') window.initPos();
+  if (typeof window.initPosSearch === 'function') window.initPosSearch();
+  if (typeof window.initPosPayments === 'function') window.initPosPayments();
+  if (typeof window.initPosServices === 'function') window.initPosServices();
+
+  // 4. Navegación en el menú lateral
+  document.querySelectorAll('.sidebar-menu .nav-link').forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      const targetView = link.dataset.view;
+
+      if (targetView === 'inventory') {
+        window.switchView('inventory');
+      } else if (targetView === 'pos') {
+        window.switchView('pos');
+      } else if (targetView === 'sales-history') {
+        window.switchView('sales-history');
+      } else if (targetView === 'cash-cut' || targetView === 'cash-closing') {
+        window.switchView('cash-cut');
+      } else if (targetView === 'shrinkage') {
+        window.switchView('inventory');
+        if (typeof window.openShrinkageModal === 'function') window.openShrinkageModal();
+      } else {
+        const title = link.querySelector('span')?.textContent || 'Módulo';
+        showModal('Módulo en Desarrollo', `La sección "${title}" se encuentra en fase de desarrollo.`);
+      }
+    });
+  });
+
+  // 5. Renderizado inicial de vistas
+  if (typeof window.renderCart === 'function') window.renderCart();
+  if (typeof window.renderInventory === 'function') window.renderInventory();
+  if (typeof window.renderSalesHistory === 'function') window.renderSalesHistory();
+  if (typeof window.renderCashCut === 'function') window.renderCashCut();
+  if (typeof window.renderShrinkageTable === 'function') window.renderShrinkageTable();
+  if (typeof window.updateSuspendedBadge === 'function') window.updateSuspendedBadge();
+}
+
+window.initApp = initApp;
+
+// Ejecutar inmediatamente si el DOM ya está listo o esperar el evento
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initApp);
+} else {
+  initApp();
+}
