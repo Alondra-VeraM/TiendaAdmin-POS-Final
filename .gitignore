@@ -10,6 +10,10 @@ yarn-error.log*
 .env.local
 .env.*.local
 
+# Bases de datos locales de respaldo
+database/*.sqlite*
+database/pos_local_data.json
+
 # IDEs y editores
 .idea/
 .vscode/

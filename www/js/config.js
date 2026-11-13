@@ -4,27 +4,47 @@
  */
 
 window.ENV_CONFIG = {
-  // URL base de tu proyecto Supabase
+  // URL base del proyecto Supabase
   SUPABASE_URL: 'https://qluxojdodesadfthugml.supabase.co',
 
-  // Clave pública anónima de tu proyecto Supabase
+  // Clave pública anónima del proyecto Supabase
   SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFsdXhvamRvZGVzYWRmdGh1Z21sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxODM5NTUsImV4cCI6MjEwNzc1OTk1NX0.t5etK56r6Z2qsHPtjni7wnN1AmUSDEfQXG_4Roum2u0',
 
   // Configuración de la tienda
   STORE_NAME: 'TIENDA ABARROTES NEXUS',
-  TERMINAL_CODE: 'C1',
-  TERMINAL_NAME: 'Caja 1',
   DEFAULT_ADMIN_PIN: '1234'
+};
+
+// Obtener terminal activa de forma persistente (C1 o C2)
+window.getActiveTerminal = function() {
+  try {
+    const savedCode = localStorage.getItem('pos_terminal_code') || 'C1';
+    const code = (savedCode === 'C2') ? 'C2' : 'C1';
+    const name = (code === 'C2') ? 'Caja 2' : 'Caja 1';
+    return { code, name };
+  } catch (e) {
+    return { code: 'C1', name: 'Caja 1' };
+  }
+};
+
+// Guardar terminal activa persistente
+window.setActiveTerminal = function(code) {
+  const cleanCode = (code === 'C2') ? 'C2' : 'C1';
+  try {
+    localStorage.setItem('pos_terminal_code', cleanCode);
+  } catch (e) {}
+  return window.getActiveTerminal();
 };
 
 // Función para obtener la configuración activa
 window.getAppConfig = function() {
+  const terminal = window.getActiveTerminal();
   return {
     supabaseUrl: window.ENV_CONFIG.SUPABASE_URL,
     supabaseAnonKey: window.ENV_CONFIG.SUPABASE_ANON_KEY,
     storeName: window.ENV_CONFIG.STORE_NAME,
-    terminalCode: window.ENV_CONFIG.TERMINAL_CODE,
-    terminalName: window.ENV_CONFIG.TERMINAL_NAME,
+    terminalCode: terminal.code,
+    terminalName: terminal.name,
     adminPin: window.ENV_CONFIG.DEFAULT_ADMIN_PIN
   };
 };

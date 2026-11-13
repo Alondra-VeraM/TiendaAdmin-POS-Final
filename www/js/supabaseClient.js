@@ -1,6 +1,7 @@
 /**
  * SUPABASE CLIENT & DATA LAYER
  * Conexión nativa con Supabase (PostgreSQL) para NEXUS Retail POS
+ * Fuente principal de verdad y sincronización multi-terminal (Caja 1 y Caja 2).
  */
 
 // Utilidades seguras de almacenamiento local
@@ -21,20 +22,20 @@ function safeSetStorage(key, val) {
   } catch (e) {}
 }
 
-// Catálogo base de referencia (utilizado como fallback mientras carga la red)
+// Catálogo base de referencia (utilizado como fallback mientras carga la red inicial)
 const INITIAL_INVENTORY = [
-  { id: 1, barcode: '7501820511234', sku: '7501820511234', name: 'Leche Lala Entera 1L', category: 'Lácteos y Cremería', cost: 22.50, price: 29.50, stock: 34 },
-  { id: 2, barcode: '750185538472', sku: '750185538472', name: 'Coca-Cola Original 600ml', category: 'Bebidas y Refrescos', cost: 14.00, price: 19.00, stock: 42 },
-  { id: 3, barcode: '750103912089', sku: '750103912089', name: 'Aceite Nutrioli 850ml', category: 'Abarrotes y Granos', cost: 36.00, price: 45.00, stock: 4 },
-  { id: 4, barcode: '750188881235', sku: '750188881235', name: 'Huevo Blanco San Juan 1kg', category: 'Abarrotes y Granos', cost: 42.00, price: 52.00, stock: 15 },
-  { id: 5, barcode: '750954123456', sku: '750954123456', name: 'Pan Bimbo Blanco 680g', category: 'Panadería', cost: 28.00, price: 38.00, stock: 0 },
-  { id: 6, barcode: '750321654789', sku: '750321654789', name: 'Manzana Roja 1kg', category: 'Frutas y Verduras', cost: 25.00, price: 35.00, stock: 50 },
-  { id: 7, barcode: '750741852963', sku: '750741852963', name: 'Arroz Morelos 1kg', category: 'Abarrotes y Granos', cost: 18.00, price: 26.00, stock: 3 },
-  { id: 8, barcode: '750369258147', sku: '750369258147', name: 'Frijol Pinto 1kg', category: 'Abarrotes y Granos', cost: 22.00, price: 32.00, stock: 27 },
-  { id: 9, barcode: '750147258369', sku: '750147258369', name: 'Sabritas Original 45g', category: 'Botanas', cost: 10.00, price: 15.00, stock: 60 },
-  { id: 10, barcode: '750258369147', sku: '750258369147', name: 'Jabón Zote 200g', category: 'Limpieza e Higiene', cost: 8.00, price: 12.00, stock: 5 },
-  { id: 11, barcode: '750369147258', sku: '750369147258', name: 'Papel Higiénico Suavel 4 rollos', category: 'Limpieza e Higiene', cost: 20.00, price: 32.00, stock: 18 },
-  { id: 12, barcode: '750456789321', sku: '750456789321', name: 'Agua Ciel 1.5L', category: 'Bebidas y Refrescos', cost: 12.00, price: 16.00, stock: 33 }
+  { id: 1, barcode: '7501820511234', sku: '7501820511234', name: 'Leche Lala Entera 1L', category: 'Lácteos y Cremería', cost: 22.50, price: 29.50, stock: 34, iconType: 'milk' },
+  { id: 2, barcode: '750185538472', sku: '750185538472', name: 'Coca-Cola Original 600ml', category: 'Bebidas y Refrescos', cost: 14.00, price: 19.00, stock: 42, iconType: 'soda' },
+  { id: 3, barcode: '750103912089', sku: '750103912089', name: 'Aceite Nutrioli 850ml', category: 'Abarrotes y Granos', cost: 36.00, price: 45.00, stock: 4, iconType: 'general' },
+  { id: 4, barcode: '750188881235', sku: '750188881235', name: 'Huevo Blanco San Juan 1kg', category: 'Abarrotes y Granos', cost: 42.00, price: 52.00, stock: 15, iconType: 'egg' },
+  { id: 5, barcode: '750954123456', sku: '750954123456', name: 'Pan Bimbo Blanco 680g', category: 'Panadería', cost: 28.00, price: 38.00, stock: 0, iconType: 'bread' },
+  { id: 6, barcode: '750321654789', sku: '750321654789', name: 'Manzana Roja 1kg', category: 'Frutas y Verduras', cost: 25.00, price: 35.00, stock: 50, iconType: 'general' },
+  { id: 7, barcode: '750741852963', sku: '750741852963', name: 'Arroz Morelos 1kg', category: 'Abarrotes y Granos', cost: 18.00, price: 26.00, stock: 3, iconType: 'general' },
+  { id: 8, barcode: '750369258147', sku: '750369258147', name: 'Frijol Pinto 1kg', category: 'Abarrotes y Granos', cost: 22.00, price: 32.00, stock: 27, iconType: 'general' },
+  { id: 9, barcode: '750147258369', sku: '750147258369', name: 'Sabritas Original 45g', category: 'Botanas', cost: 10.00, price: 15.00, stock: 60, iconType: 'general' },
+  { id: 10, barcode: '750258369147', sku: '750258369147', name: 'Jabón Zote 200g', category: 'Limpieza e Higiene', cost: 8.00, price: 12.00, stock: 5, iconType: 'general' },
+  { id: 11, barcode: '750369147258', sku: '750369147258', name: 'Papel Higiénico Suavel 4 rollos', category: 'Limpieza e Higiene', cost: 20.00, price: 32.00, stock: 18, iconType: 'general' },
+  { id: 12, barcode: '750456789321', sku: '750456789321', name: 'Agua Ciel 1.5L', category: 'Bebidas y Refrescos', cost: 12.00, price: 16.00, stock: 33, iconType: 'general' }
 ];
 
 const INITIAL_SALES_HISTORY = [];
@@ -61,7 +62,6 @@ function initSupabaseClient() {
 
   if (url && key && url.includes('supabase.co')) {
     try {
-      // Soporta window.supabase.createClient de la librería UMD
       const createFn = (typeof window !== 'undefined' && window.supabase && typeof window.supabase.createClient === 'function')
         ? window.supabase.createClient
         : (typeof supabase !== 'undefined' && typeof supabase.createClient === 'function' ? supabase.createClient : null);
@@ -69,7 +69,6 @@ function initSupabaseClient() {
       if (createFn) {
         supabaseClientInstance = createFn(url, key);
         isSupabaseConnected = true;
-        console.log('Supabase conectado con éxito a:', url);
         updateSyncIndicator(true);
         return supabaseClientInstance;
       }
@@ -87,10 +86,10 @@ function updateSyncIndicator(online) {
   const statusDot = document.querySelector('.dot-sync-green');
   const statusText = document.querySelector('.sync-status-text');
   if (statusText) {
-    statusText.textContent = 'BD Local (Activa) • Respaldo Diario';
+    statusText.textContent = online ? 'Supabase Nube (En línea)' : 'Sin Conexión (Revisar Red)';
   }
   if (statusDot) {
-    statusDot.style.backgroundColor = '#10b981';
+    statusDot.style.backgroundColor = online ? '#10b981' : '#ef4444';
   }
 }
 
@@ -103,45 +102,51 @@ const PosDataService = {
     return supabaseClientInstance;
   },
 
+  isConnected() {
+    return isSupabaseConnected && !!this.getClient();
+  },
+
   /**
-   * Consulta directa al Master Local (/api/pos/products)
-   * Sin race conditions: la base de datos local es la única dueña de los datos.
+   * Consulta directa al catálogo de productos en Supabase (Fuente de verdad compartida)
    */
   async fetchProducts() {
-    try {
-      const res = await fetch('/api/pos/products');
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.ok && Array.isArray(data.products) && data.products.length > 0) {
-          const formatted = data.products.map(p => ({
+    const client = this.getClient();
+    if (client) {
+      try {
+        const { data, error } = await client
+          .from('products')
+          .select('*')
+          .eq('is_active', true)
+          .order('name');
+
+        if (!error && Array.isArray(data) && data.length > 0) {
+          const formatted = data.map(p => ({
             id: p.id,
             barcode: p.barcode,
             sku: p.sku || p.barcode,
             name: p.name,
-            displayName: p.displayName || p.name,
+            displayName: p.display_name || p.name,
             category: p.category,
             cost: parseFloat(p.cost || 0),
             price: parseFloat(p.price || 0),
             stock: parseInt(p.stock, 10) || 0,
-            iconType: p.iconType || 'bread',
-            promoRule: p.promoRule || null
+            iconType: p.icon_type || 'bread',
+            promoRule: p.promo_rule || null
           }));
 
           safeSetStorage('pos_inventory_products', JSON.stringify(formatted));
+          isSupabaseConnected = true;
           updateSyncIndicator(true);
           return formatted;
         }
+      } catch (err) {
+        console.warn('Error consultando productos de Supabase:', err);
       }
-    } catch (err) {
-      // Si la llamada de red local falla, recurre al almacenamiento local del navegador
     }
 
     return this.getInventoryProducts();
   },
 
-  /**
-   * Obtiene inventario de forma inmediata (con fallback local/inicial)
-   */
   getInventoryProducts() {
     const stored = safeGetStorage('pos_inventory_products');
     if (stored) {
@@ -156,300 +161,430 @@ const PosDataService = {
   },
 
   /**
-   * Consulta las ventas del día desde la base de datos local
+   * Consulta el estado del turno para la terminal indicada (C1 o C2)
    */
-  async fetchSales() {
-    try {
-      const res = await fetch('/api/pos/sales');
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.ok && Array.isArray(data.sales)) {
-          safeSetStorage('pos_sales_history', JSON.stringify(data.sales));
-          return data.sales;
+  async getTerminalShift(terminalCode) {
+    const code = terminalCode || (typeof window.getActiveTerminal === 'function' ? window.getActiveTerminal().code : 'C1');
+    const client = this.getClient();
+
+    if (client) {
+      try {
+        const { data, error } = await client.rpc('get_terminal_shift', {
+          p_terminal_code: code
+        });
+
+        if (!error && data) {
+          isSupabaseConnected = true;
+          updateSyncIndicator(true);
+          safeSetStorage(`pos_shift_${code}`, JSON.stringify(data));
+          return data;
         }
+        if (error) {
+          console.warn('Error RPC get_terminal_shift:', error.message);
+        }
+      } catch (err) {
+        console.warn('Fallo de red al consultar turno de terminal:', err);
+        isSupabaseConnected = false;
+        updateSyncIndicator(false);
       }
-    } catch (err) {}
+    }
+
+    // Fallback de caché local si la red falla
+    const cached = safeGetStorage(`pos_shift_${code}`);
+    if (cached) {
+      try { return JSON.parse(cached); } catch (e) {}
+    }
+
+    return { is_open: false, terminal_code: code, error: 'Sin conexión con Supabase' };
+  },
+
+  /**
+   * Abre un nuevo turno en Supabase
+   */
+  async openTerminalShift(terminalCode, terminalName, cashierName, initialFund = 1000.00) {
+    const client = this.getClient();
+    if (!client) {
+      return { ok: false, error: 'No hay conexión con Supabase para abrir el turno.' };
+    }
+
+    try {
+      const { data, error } = await client.rpc('open_terminal_shift', {
+        p_terminal_code: terminalCode,
+        p_terminal_name: terminalName,
+        p_cashier_name: cashierName || 'Cajero',
+        p_initial_fund: parseFloat(initialFund) || 1000.00
+      });
+
+      if (error) {
+        return { ok: false, error: error.message };
+      }
+
+      if (data && data.ok) {
+        safeSetStorage(`pos_shift_${terminalCode}`, JSON.stringify({ is_open: true, shift: data.shift }));
+        return data;
+      }
+      return data || { ok: false, error: 'Respuesta inválida al abrir turno' };
+    } catch (err) {
+      return { ok: false, error: 'Error de red al abrir turno: ' + err.message };
+    }
+  },
+
+  /**
+   * Cierra el turno activo y guarda permanentemente el corte de caja en Supabase
+   */
+  async closeTerminalShift(terminalCode, countedCash, notes = null, cashInflows = 0, cashOutflows = 0, supplierPayouts = 0) {
+    const client = this.getClient();
+    if (!client) {
+      return { ok: false, error: 'No hay conexión con Supabase para cerrar el turno y guardar el corte.' };
+    }
+
+    try {
+      const { data, error } = await client.rpc('close_terminal_shift', {
+        p_terminal_code: terminalCode,
+        p_counted_cash: parseFloat(countedCash) || 0,
+        p_notes: notes,
+        p_cash_inflows: parseFloat(cashInflows) || 0,
+        p_cash_outflows: parseFloat(cashOutflows) || 0,
+        p_supplier_payouts: parseFloat(supplierPayouts) || 0
+      });
+
+      if (error) {
+        return { ok: false, error: error.message };
+      }
+
+      if (data && data.ok) {
+        safeSetStorage(`pos_shift_${terminalCode}`, JSON.stringify({ is_open: false, last_shift: data.shift }));
+        return data;
+      }
+      return data || { ok: false, error: 'Respuesta inválida al cerrar turno' };
+    } catch (err) {
+      return { ok: false, error: 'Error de red al cerrar turno: ' + err.message };
+    }
+  },
+
+  /**
+   * Registra una venta de forma atómica en Supabase:
+   * Valida turno abierto, bloquea filas de producto para evitar sobreventas concurrentes,
+   * valida existencias, descuenta inventario y asocia la venta al turno.
+   */
+  async registerSale(salePayload, items = []) {
+    const client = this.getClient();
+    if (!client) {
+      return {
+        success: false,
+        error: 'Sin conexión con el servidor Supabase. No se puede procesar la venta sin persistencia.'
+      };
+    }
+
+    try {
+      const terminalInfo = typeof window.getActiveTerminal === 'function' ? window.getActiveTerminal() : { code: 'C1', name: 'Caja 1' };
+      const terminalCode = salePayload.terminal_code || terminalInfo.code;
+      const terminalName = salePayload.terminal_name || terminalInfo.name;
+
+      const formattedItems = items.map(it => ({
+        id: it.id,
+        barcode: it.barcode || it.sku,
+        sku: it.sku || it.barcode,
+        name: it.name,
+        unitPrice: parseFloat(it.unitPrice || it.price || 0),
+        quantity: parseInt(it.quantity, 10) || 1,
+        discount: parseFloat(it.discount || 0),
+        subtotal: parseFloat(it.subtotal || ((it.unitPrice || it.price || 0) * (it.quantity || 1))),
+        promo_applied: it.promoRule ? JSON.stringify(it.promoRule) : null
+      }));
+
+      const { data, error } = await client.rpc('register_sale_atomic', {
+        p_folio: salePayload.folio,
+        p_terminal_code: terminalCode,
+        p_terminal_name: terminalName,
+        p_cashier_name: salePayload.cashier_name || 'Cajero',
+        p_subtotal: parseFloat(salePayload.subtotal || salePayload.total_net || 0),
+        p_discount: parseFloat(salePayload.discount || 0),
+        p_total_net: parseFloat(salePayload.total_net || 0),
+        p_payment_method: salePayload.payment_method || 'cash',
+        p_cash_received: salePayload.cash_received != null ? parseFloat(salePayload.cash_received) : null,
+        p_cash_change: salePayload.cash_change != null ? parseFloat(salePayload.cash_change) : null,
+        p_cash_amount: salePayload.cash_amount != null ? parseFloat(salePayload.cash_amount) : null,
+        p_card_amount: salePayload.card_amount != null ? parseFloat(salePayload.card_amount) : null,
+        p_transfer_amount: salePayload.transfer_amount != null ? parseFloat(salePayload.transfer_amount) : null,
+        p_items: formattedItems
+      });
+
+      if (error) {
+        return { success: false, error: error.message };
+      }
+
+      if (data && data.ok) {
+        // Refrescar inventario localmente tras la venta exitosa
+        await this.fetchProducts();
+        return { success: true, result: data, duplicate: data.duplicate || false };
+      }
+
+      return {
+        success: false,
+        error: data?.error || 'No se pudo completar la venta',
+        errorCode: data?.error_code
+      };
+    } catch (err) {
+      console.error('Error registrando venta en Supabase:', err);
+      return {
+        success: false,
+        error: 'Error de conexión con Supabase al registrar venta: ' + err.message
+      };
+    }
+  },
+
+  /**
+   * Consulta el historial de ventas desde Supabase
+   */
+  async fetchSales(limit = 100, terminalCode = null) {
+    const client = this.getClient();
+    if (client) {
+      try {
+        let query = client
+          .from('sales')
+          .select('*, sale_items(*)')
+          .order('created_at', { ascending: false })
+          .limit(limit);
+
+        if (terminalCode && terminalCode !== 'all') {
+          query = query.eq('terminal_code', terminalCode);
+        }
+
+        const { data, error } = await query;
+        if (!error && Array.isArray(data)) {
+          // Adaptar formato esperado por el frontend
+          const formatted = data.map(s => {
+            const dt = new Date(s.created_at);
+            const pad = (n) => String(n).padStart(2, '0');
+            const timeStr = !isNaN(dt.getTime()) ? `${pad(dt.getHours())}:${pad(dt.getMinutes())} hrs` : '--:--';
+            const itemsList = Array.isArray(s.sale_items) ? s.sale_items : [];
+            const itemsSummaryText = `${s.total_pieces || itemsList.length} producto${(s.total_pieces || itemsList.length) === 1 ? '' : 's'}`;
+            const itemsDetailText = itemsList.map(it => `${it.product_name} x${it.quantity}`).join(', ');
+
+            return {
+              id: s.id,
+              folio: s.folio,
+              date: timeStr,
+              created_at: s.created_at,
+              cajaCode: s.terminal_code || 'C1',
+              cajaName: s.terminal_name || 'Caja 1',
+              cashier: s.cashier_name || 'Cajero',
+              itemsCount: s.total_pieces || itemsList.length,
+              itemsSummary: itemsSummaryText,
+              itemsDetail: itemsDetailText,
+              items: itemsList.map(it => ({
+                name: it.product_name,
+                quantity: it.quantity,
+                unitPrice: parseFloat(it.unit_price || 0),
+                total: parseFloat(it.subtotal || 0)
+              })),
+              paymentMethod: s.payment_method,
+              cashAmount: parseFloat(s.cash_amount || 0),
+              cardAmount: parseFloat(s.card_amount || 0),
+              transferAmount: parseFloat(s.transfer_amount || 0),
+              total: parseFloat(s.total_net || 0),
+              status: s.status || 'completed'
+            };
+          });
+
+          safeSetStorage('pos_sales_history', JSON.stringify(formatted));
+          return formatted;
+        }
+      } catch (err) {
+        console.warn('Error al consultar ventas de Supabase:', err);
+      }
+    }
 
     return this.getSalesHistory();
   },
 
   getSalesHistory() {
     const stored = safeGetStorage('pos_sales_history');
-    const now = new Date();
-    const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) {
-          // Filtrar exclusivamente ventas realizadas el día de hoy
-          const todaySales = parsed.filter(s => {
-            if (!s.created_at) return false;
-            const dt = new Date(s.created_at);
-            return (!isNaN(dt.getTime()) && dt >= todayMidnight) || s.created_at.startsWith(todayStr);
-          });
-          return todaySales;
-        }
+        if (Array.isArray(parsed)) return parsed;
       } catch (e) {}
     }
     return [];
   },
 
   /**
-   * Guarda o actualiza un producto en la base de datos local
+   * Consulta cortes de caja históricos para reportes de varios días
+   */
+  async fetchReports(startDate, endDate, terminalCode = 'all') {
+    const client = this.getClient();
+    if (!client) {
+      return { ok: false, error: 'Sin conexión con Supabase para consultar reportes.' };
+    }
+
+    try {
+      let query = client.from('cash_cuts').select('*');
+
+      if (startDate) {
+        // Asegurar inicio del día local en formato ISO
+        const startIso = (startDate.includes('T')) ? startDate : `${startDate}T00:00:00.000Z`;
+        query = query.gte('opened_at', startIso);
+      }
+
+      if (endDate) {
+        // Asegurar fin del día local en formato ISO
+        const endIso = (endDate.includes('T')) ? endDate : `${endDate}T23:59:59.999Z`;
+        query = query.lte('opened_at', endIso);
+      }
+
+      if (terminalCode && terminalCode !== 'all') {
+        query = query.eq('terminal_code', terminalCode);
+      }
+
+      query = query.order('opened_at', { ascending: false });
+
+      const { data, error } = await query;
+      if (error) {
+        return { ok: false, error: error.message };
+      }
+
+      const cuts = Array.isArray(data) ? data : [];
+
+      // Calcular acumulados de forma segura
+      let totalSalesCount = 0;
+      let totalSalesAmount = 0;
+      let totalCashSales = 0;
+      let totalCardSales = 0;
+      let totalTransferSales = 0;
+      let totalMixedSales = 0;
+      let totalInflows = 0;
+      let totalOutflows = 0;
+      let totalSupplier = 0;
+      let totalInitialFunds = 0;
+      let totalCountedCash = 0;
+      let totalExpectedCash = 0;
+      let totalDifference = 0;
+
+      cuts.forEach(c => {
+        totalSalesCount += parseInt(c.total_sales_count || 0, 10);
+        totalSalesAmount += parseFloat(c.total_sales_amount || 0);
+        totalCashSales += parseFloat(c.cash_sales || 0);
+        totalCardSales += parseFloat(c.card_sales || 0);
+        totalTransferSales += parseFloat(c.transfer_sales || c.qr_sales || 0);
+        totalMixedSales += parseFloat(c.mixed_sales || 0);
+        totalInflows += parseFloat(c.cash_inflows || 0);
+        totalOutflows += parseFloat(c.cash_outflows || 0);
+        totalSupplier += parseFloat(c.supplier_payouts || 0);
+        totalInitialFunds += parseFloat(c.initial_fund || 0);
+        totalCountedCash += parseFloat(c.counted_cash || 0);
+        totalExpectedCash += parseFloat(c.expected_cash || 0);
+        totalDifference += parseFloat(c.difference || 0);
+      });
+
+      return {
+        ok: true,
+        cuts,
+        totals: {
+          cutsCount: cuts.length,
+          totalSalesCount,
+          totalSalesAmount,
+          totalCashSales,
+          totalCardSales,
+          totalTransferSales,
+          totalMixedSales,
+          totalInflows,
+          totalOutflows,
+          totalSupplier,
+          totalInitialFunds,
+          totalCountedCash,
+          totalExpectedCash,
+          totalDifference
+        }
+      };
+    } catch (err) {
+      return { ok: false, error: 'Error al consultar reportes: ' + err.message };
+    }
+  },
+
+  /**
+   * Guarda o actualiza un producto en Supabase
    */
   async saveProduct(product) {
-    try {
-      const res = await fetch('/api/producto', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          codigo_barras: product.barcode,
-          nombre: product.name,
-          categoria: product.category,
-          costo: product.cost,
-          precio: product.price,
-          stock: product.stock,
-          origen: 'pos'
-        })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.producto) {
-          product.id = data.producto.id;
+    const client = this.getClient();
+    if (client) {
+      try {
+        const payload = {
+          barcode: product.barcode,
+          sku: product.sku || product.barcode,
+          name: product.name,
+          display_name: product.displayName || product.name,
+          category: product.category || 'General',
+          cost: parseFloat(product.cost || 0),
+          price: parseFloat(product.price || 0),
+          stock: parseInt(product.stock, 10) || 0,
+          is_active: true
+        };
+
+        if (product.id && !isNaN(product.id)) {
+          payload.id = Number(product.id);
         }
+
+        const { data, error } = await client
+          .from('products')
+          .upsert(payload, { onConflict: 'barcode' })
+          .select()
+          .single();
+
+        if (!error && data) {
+          product.id = data.id;
+          await this.fetchProducts();
+          return product;
+        }
+      } catch (e) {
+        console.warn('Error guardando producto en Supabase:', e);
       }
-    } catch (e) {}
+    }
+
+    // Fallback local
+    const prods = this.getInventoryProducts().filter(p => p.barcode !== product.barcode);
+    prods.unshift(product);
+    safeSetStorage('pos_inventory_products', JSON.stringify(prods));
     return product;
   },
 
   /**
-   * Elimina un producto
+   * Desactiva un producto en Supabase
    */
   async deleteProduct(productId) {
+    const client = this.getClient();
+    if (client) {
+      try {
+        await client
+          .from('products')
+          .update({ is_active: false })
+          .eq('id', productId);
+      } catch (e) {}
+    }
     const products = this.getInventoryProducts().filter(p => p.id !== productId);
-    this.saveInventoryProducts(products);
+    safeSetStorage('pos_inventory_products', JSON.stringify(products));
   },
 
-  /**
-   * Guarda lote de productos en local
-   */
-  async saveInventoryProducts(products) {
+  saveInventoryProducts(products) {
     safeSetStorage('pos_inventory_products', JSON.stringify(products));
     return products;
   },
 
   /**
-   * Entrada de mercancía por compra (actualiza stock y costo, y registra en Kardex)
-   */
-  async registerStockEntry(productId, quantity, unitCost) {
-    const client = this.getClient();
-    if (client && isSupabaseConnected) {
-      try {
-        const { data: prod } = await client
-          .from('products')
-          .select('stock, cost')
-          .eq('id', productId)
-          .single();
-
-        if (prod) {
-          const newStock = (prod.stock || 0) + quantity;
-          const newCost = (!isNaN(unitCost) && unitCost > 0) ? unitCost : prod.cost;
-
-          await client
-            .from('products')
-            .update({ stock: newStock, cost: newCost })
-            .eq('id', productId);
-
-          await client.from('inventory_movements').insert([{
-            product_id: productId,
-            movement_type: 'purchase_entry',
-            quantity: quantity,
-            previous_stock: prod.stock,
-            new_stock: newStock,
-            unit_cost: newCost,
-            notes: `Entrada por compra (+${quantity} uds)`,
-            created_by: 'Administrador'
-          }]);
-
-          console.log(`Entrada de inventario registrada en Supabase para producto ${productId}`);
-          await this.fetchProducts();
-        }
-      } catch (e) {
-        console.warn('Error registrando entrada en Supabase:', e);
-      }
-    }
-  },
-
-  /**
-   * Merma de producto (descuenta stock y registra en Kardex)
-   */
-  async registerShrinkage(productId, quantity, reasonType, notesText = '') {
-    const products = this.getInventoryProducts();
-    const prod = products.find(p => Number(p.id) === Number(productId));
-    const unitCost = prod ? parseFloat(prod.cost || 0) : 0;
-    const productName = prod ? prod.name : 'Producto #' + productId;
-    const barcode = prod ? prod.barcode : '';
-    const loss = Math.round((unitCost * quantity) * 100) / 100;
-
-    // Registrar en historial local de mermas
-    const history = this.getShrinkageHistory();
-    const now = new Date();
-    const pad = (n) => String(n).padStart(2, '0');
-    const dateStr = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()} · ${pad(now.getHours())}:${pad(now.getMinutes())} hrs`;
-
-    history.unshift({
-      id: Date.now(),
-      productId: Number(productId),
-      productName,
-      barcode,
-      quantity,
-      reasonType,
-      unitCost,
-      totalLoss: loss,
-      notes: notesText || `Merma aplicada: ${reasonType}`,
-      date: dateStr,
-      createdBy: 'Administrador'
-    });
-    this.saveShrinkageHistory(history);
-
-    const client = this.getClient();
-    if (client && isSupabaseConnected) {
-      try {
-        const { data: dbProd } = await client
-          .from('products')
-          .select('stock, cost')
-          .eq('id', productId)
-          .single();
-
-        if (dbProd) {
-          const newStock = Math.max(0, (dbProd.stock || 0) - quantity);
-          let movType = 'shrinkage_damaged';
-          if (reasonType && reasonType.includes('caduc')) movType = 'shrinkage_expired';
-          if (reasonType && reasonType.includes('robo')) movType = 'shrinkage_theft';
-
-          await client
-            .from('products')
-            .update({ stock: newStock })
-            .eq('id', productId);
-
-          await client.from('inventory_movements').insert([{
-            product_id: productId,
-            movement_type: movType,
-            quantity: -quantity,
-            previous_stock: dbProd.stock,
-            new_stock: newStock,
-            unit_cost: dbProd.cost,
-            notes: notesText || `Merma aplicada: ${reasonType}`,
-            created_by: 'Administrador'
-          }]);
-
-          console.log(`Merma registrada en Supabase para producto ${productId}`);
-          await this.fetchProducts();
-        }
-      } catch (e) {
-        console.warn('Error registrando merma en Supabase:', e);
-      }
-    }
-  },
-
-  getShrinkageHistory() {
-    const stored = safeGetStorage('pos_shrinkage_history');
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch (e) {}
-    }
-    const defaultMermas = [
-      {
-        id: 1,
-        productId: 1,
-        productName: 'Leche Lala Entera 1L',
-        barcode: '7501820511234',
-        quantity: 3,
-        reasonType: 'Producto Caducado',
-        unitCost: 22.50,
-        totalLoss: 67.50,
-        notes: 'Lote vencido reportado en revisión matutina',
-        date: '02/11/2026 · 08:45 hrs',
-        createdBy: 'Administrador'
-      },
-      {
-        id: 2,
-        productId: 4,
-        productName: 'Huevo Blanco San Juan 1kg',
-        barcode: '750188881235',
-        quantity: 4,
-        reasonType: 'Producto Dañado / Roto',
-        unitCost: 42.00,
-        totalLoss: 168.00,
-        notes: 'Caja golpeada durante maniobra de estiba',
-        date: '01/11/2026 · 17:20 hrs',
-        createdBy: 'Administrador'
-      },
-      {
-        id: 3,
-        productId: 5,
-        productName: 'Pan Bimbo Blanco 680g',
-        barcode: '750954123456',
-        quantity: 2,
-        reasonType: 'Producto Caducado',
-        unitCost: 28.00,
-        totalLoss: 56.00,
-        notes: 'Fecha de consumo preferente alcanzada',
-        date: '31/10/2026 · 19:10 hrs',
-        createdBy: 'Administrador'
-      },
-      {
-        id: 4,
-        productId: 9,
-        productName: 'Sabritas Original 45g',
-        barcode: '750147258369',
-        quantity: 5,
-        reasonType: 'Robo / Faltante',
-        unitCost: 10.00,
-        totalLoss: 50.00,
-        notes: 'Diferencia detectada en conteo físico de pasillo',
-        date: '30/10/2026 · 14:15 hrs',
-        createdBy: 'Administrador'
-      },
-      {
-        id: 5,
-        productId: 2,
-        productName: 'Coca-Cola Original 600ml',
-        barcode: '750185538472',
-        quantity: 2,
-        reasonType: 'Producto Dañado / Roto',
-        unitCost: 14.00,
-        totalLoss: 28.00,
-        notes: 'Envase perforado con pérdida de gas',
-        date: '29/10/2026 · 11:30 hrs',
-        createdBy: 'Administrador'
-      }
-    ];
-    safeSetStorage('pos_shrinkage_history', JSON.stringify(defaultMermas));
-    return defaultMermas;
-  },
-
-  saveShrinkageHistory(list) {
-    safeSetStorage('pos_shrinkage_history', JSON.stringify(list));
-    return list;
-  },
-
-  /**
-   * Busca producto por código de barras, SKU o coincidencia de nombre
+   * Busca producto por código de barras o SKU
    */
   async findProductByBarcode(code) {
     if (!code) return null;
     const cleanCode = code.trim().toLowerCase();
 
     const client = this.getClient();
-    if (client && isSupabaseConnected) {
+    if (client) {
       try {
         let { data, error } = await client
           .from('products')
           .select('*')
+          .eq('is_active', true)
           .or(`barcode.eq.${cleanCode},sku.eq.${cleanCode}`)
           .maybeSingle();
 
@@ -457,6 +592,7 @@ const PosDataService = {
           const { data: nameMatch } = await client
             .from('products')
             .select('*')
+            .eq('is_active', true)
             .ilike('name', `%${cleanCode}%`)
             .limit(1)
             .maybeSingle();
@@ -497,12 +633,11 @@ const PosDataService = {
         unitPrice: parseFloat(invMatch.price),
         category: invMatch.category,
         stock: invMatch.stock,
-        iconType: 'bread',
-        promoRule: null
+        iconType: invMatch.iconType || 'bread',
+        promoRule: invMatch.promoRule || null
       };
     }
 
-    // Búsqueda en catálogo nacional mexicano si no está en inventario local
     if (typeof window !== 'undefined' && Array.isArray(window.MEXICO_BARCODES)) {
       const mb = window.MEXICO_BARCODES.find(p => 
         (p.barcode && p.barcode.toLowerCase() === cleanCode) || 
@@ -528,22 +663,20 @@ const PosDataService = {
   },
 
   /**
-   * Búsqueda predictiva de productos en tiempo real (autocompletado al teclear)
+   * Búsqueda predictiva de productos en tiempo real
    */
   async searchProducts(term) {
     if (!term || !term.trim()) return [];
     const cleanTerm = term.trim().toLowerCase();
-
     const matches = [];
-    const localList = this.getInventoryProducts() || [];
 
-    // Búsqueda en Supabase si está disponible
     const client = this.getClient();
-    if (client && isSupabaseConnected) {
+    if (client) {
       try {
         const { data, error } = await client
           .from('products')
           .select('*')
+          .eq('is_active', true)
           .or(`barcode.ilike.%${cleanTerm}%,sku.ilike.%${cleanTerm}%,name.ilike.%${cleanTerm}%,category.ilike.%${cleanTerm}%`)
           .limit(15);
 
@@ -564,12 +697,10 @@ const PosDataService = {
             });
           });
         }
-      } catch (e) {
-        console.warn('Error en búsqueda predictiva Supabase:', e);
-      }
+      } catch (e) {}
     }
 
-    // Búsqueda en inventario local / fallback
+    const localList = this.getInventoryProducts() || [];
     localList.forEach(item => {
       const bcode = String(item.barcode || '').toLowerCase();
       const sku = String(item.sku || '').toLowerCase();
@@ -583,46 +714,18 @@ const PosDataService = {
             barcode: item.barcode,
             sku: item.sku || item.barcode,
             name: item.name,
-            displayName: item.display_name || item.name,
+            displayName: item.displayName || item.name,
             price: parseFloat(item.price || 0),
             unitPrice: parseFloat(item.price || 0),
             category: item.category || 'General',
             stock: parseInt(item.stock || 0, 10),
-            iconType: item.icon_type || 'bread',
-            promoRule: item.promo_rule || null
+            iconType: item.iconType || 'bread',
+            promoRule: item.promoRule || null
           });
         }
       }
     });
 
-    // Búsqueda en catálogo nacional mexicano
-    if (typeof window !== 'undefined' && Array.isArray(window.MEXICO_BARCODES)) {
-      window.MEXICO_BARCODES.forEach(item => {
-        const bcode = String(item.barcode || '').toLowerCase();
-        const name = String(item.name || '').toLowerCase();
-        const cat = String(item.category || '').toLowerCase();
-
-        if (bcode.includes(cleanTerm) || name.includes(cleanTerm) || cat.includes(cleanTerm)) {
-          if (!matches.some(m => m.barcode === item.barcode)) {
-            matches.push({
-              id: 'mb_' + item.barcode,
-              barcode: item.barcode,
-              sku: item.barcode,
-              name: item.name,
-              displayName: item.name,
-              price: parseFloat(item.price || 0),
-              unitPrice: parseFloat(item.price || 0),
-              category: item.category || 'General',
-              stock: 50,
-              iconType: 'bread',
-              promoRule: null
-            });
-          }
-        }
-      });
-    }
-
-    // Ordenar por relevancia: los que empiezan con el término primero
     matches.sort((a, b) => {
       const aName = (a.name || '').toLowerCase();
       const bName = (b.name || '').toLowerCase();
@@ -637,87 +740,31 @@ const PosDataService = {
   },
 
   /**
-   * Obtiene servicios rápidos
-   */
-  async getQuickServices() {
-    const client = this.getClient();
-    if (client && isSupabaseConnected) {
-      try {
-        const { data, error } = await client
-          .from('quick_services')
-          .select('*')
-          .eq('is_active', true);
-        if (!error && data && data.length > 0) return data;
-      } catch (err) {}
-    }
-    return [
-      { id: 'recargas', name: 'Recargas', icon: 'phone', subtitle: 'Tiempo aire' },
-      { id: 'pago_1', name: 'Pago de x', icon: 'time', subtitle: 'Servicio' },
-      { id: 'pago_2', name: 'Pago con comisión $5.00', icon: 'bill', subtitle: 'Comisión $5.00' },
-      { id: 'pago_3', name: 'Pago de x', icon: 'water', subtitle: 'Servicio general' }
-    ];
-  },
-
-  /**
-   * Registra una venta completa en la Base de Datos Local (Master)
-   * con actualización atómica de stock y registro en Kardex
-   */
-  async registerSale(salePayload, items = []) {
-    try {
-      const res = await fetch('/api/pos/sale', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...salePayload,
-          items: items.map(it => ({
-            id: it.id,
-            barcode: it.barcode || it.sku,
-            sku: it.sku || it.barcode,
-            name: it.name,
-            unitPrice: it.unitPrice || it.price || 0,
-            quantity: it.quantity || 1,
-            discount: it.discount || 0,
-            subtotal: it.subtotal || ((it.unitPrice || it.price || 0) * (it.quantity || 1)),
-            promoRule: it.promoRule || null
-          }))
-        })
-      });
-
-      if (res.ok) {
-        const result = await res.json();
-        // Si el backend devolvió el nuevo stock de los productos afectados, actualizar caché inmediatamente
-        if (result && result.updatedProducts && Array.isArray(result.updatedProducts)) {
-          const prods = this.getInventoryProducts();
-          result.updatedProducts.forEach(up => {
-            const p = prods.find(x => x.id === up.id || x.barcode === up.barcode);
-            if (p) p.stock = up.newStock;
-          });
-          safeSetStorage('pos_inventory_products', JSON.stringify(prods));
-        }
-        return { success: true, localMaster: true, result };
-      }
-    } catch (err) {
-      console.warn('Venta procesada localmente:', err);
-    }
-    return { success: true, localOnly: true };
-  },
-
-  /**
-   * Cancela una venta registrada en la base de datos local y restituye existencias
+   * Cancelación de venta y restitución de existencias
    */
   async cancelSale(ticketFolio, adminName = 'Administrador') {
-    try {
-      await fetch('/api/pos/cancel-sale', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          folio: ticketFolio,
-          reason: 'Cancelación autorizada en punto de venta'
-        })
-      });
-    } catch (err) {
-      console.warn('Cancelación local:', err);
+    const client = this.getClient();
+    if (client) {
+      try {
+        const { error } = await client
+          .from('sales')
+          .update({
+            status: 'cancelled',
+            cancelled_at: new Date().toISOString(),
+            cancelled_by: adminName,
+            cancellation_reason: 'Cancelación autorizada en punto de venta'
+          })
+          .eq('folio', ticketFolio);
+
+        if (!error) {
+          await this.fetchProducts();
+          return { ok: true };
+        }
+      } catch (err) {
+        console.warn('Error cancelando venta en Supabase:', err);
+      }
     }
+    return { ok: false, error: 'No se pudo cancelar en Supabase' };
   },
 
   saveSalesHistory(history) {
@@ -725,207 +772,82 @@ const PosDataService = {
     return history;
   },
 
-  // ===========================================================================
-  // RECEPCIÓN DE MERCANCÍA (escáner, cajas / códigos padre y facturas CFDI)
-  // ===========================================================================
-
-  /** Cajas guardadas en este equipo (respaldo cuando no hay internet) */
-  getLocalPackages() {
-    const stored = safeGetStorage('pos_product_packages');
-    if (stored) {
-      try { return JSON.parse(stored); } catch (e) {}
+  /**
+   * Suscripción en tiempo real a cambios de productos (compartido entre Caja 1 y Caja 2)
+   */
+  subscribeToProducts(onChange) {
+    const client = this.getClient();
+    if (!client || typeof client.channel !== 'function') return null;
+    try {
+      return client
+        .channel('products-live-channel')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
+          if (typeof onChange === 'function') onChange();
+        })
+        .subscribe();
+    } catch (e) {
+      return null;
     }
-    return [
-      { barcode: '17501820511231', product_id: 1, units: 12, description: 'Caja Leche Lala Entera 1L (12 pzas)' },
-      { barcode: '17501855384729', product_id: 2, units: 24, description: 'Caja Coca-Cola 600ml (24 pzas)' }
-    ];
   },
 
-  saveLocalPackages(list) {
-    safeSetStorage('pos_product_packages', JSON.stringify(list));
+  /**
+   * Suscripción en tiempo real a cambios de turnos y cortes de caja
+   */
+  subscribeToShifts(onChange) {
+    const client = this.getClient();
+    if (!client || typeof client.channel !== 'function') return null;
+    try {
+      return client
+        .channel('cash-cuts-channel')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'cash_cuts' }, () => {
+          if (typeof onChange === 'function') onChange();
+        })
+        .subscribe();
+    } catch (e) {
+      return null;
+    }
   },
 
-  /** Lista de cajas (códigos padre) */
+  // Recepción de mercancía
   async getPackages() {
     const client = this.getClient();
-    if (client && isSupabaseConnected) {
+    if (client) {
       try {
         const { data, error } = await client
           .from('product_packages')
           .select('barcode, product_id, units, description')
           .order('created_at', { ascending: false });
-        if (!error && Array.isArray(data)) {
-          this.saveLocalPackages(data);
-          return data;
-        }
+        if (!error && Array.isArray(data)) return data;
       } catch (e) {}
     }
-    return this.getLocalPackages();
+    return [];
   },
 
-  /** Guarda (o actualiza) una caja: código de la caja -> producto x piezas */
   async savePackage(pkg) {
-    const row = {
-      barcode: String(pkg.barcode).trim(),
-      product_id: Number(pkg.product_id),
-      units: parseInt(pkg.units, 10) || 1,
-      description: pkg.description || null
-    };
-
-    const local = this.getLocalPackages().filter(p => p.barcode !== row.barcode);
-    local.unshift(row);
-    this.saveLocalPackages(local);
-
     const client = this.getClient();
-    if (client && isSupabaseConnected) {
+    if (client) {
       try {
-        const { error } = await client.from('product_packages').upsert(row, { onConflict: 'barcode' });
+        const { error } = await client.from('product_packages').upsert({
+          barcode: String(pkg.barcode).trim(),
+          product_id: Number(pkg.product_id),
+          units: parseInt(pkg.units, 10) || 1,
+          description: pkg.description || null
+        }, { onConflict: 'barcode' });
         if (error) return { ok: false, error: error.message };
-      } catch (e) {}
-    }
-    return { ok: true };
-  },
-
-  async deletePackage(barcode) {
-    this.saveLocalPackages(this.getLocalPackages().filter(p => p.barcode !== barcode));
-    const client = this.getClient();
-    if (client && isSupabaseConnected) {
-      try {
-        await client.from('product_packages').delete().eq('barcode', barcode);
-      } catch (e) {}
-    }
-  },
-
-  /**
-   * Identifica un código escaneado SIN modificar nada.
-   * Devuelve { product, units, isPackage } o null si no existe.
-   */
-  async lookupReceivingCode(code) {
-    const clean = String(code || '').trim();
-    if (!clean) return null;
-
-    const client = this.getClient();
-    if (client && isSupabaseConnected) {
-      try {
-        const { data: prod, error: prodError } = await client
-          .from('products')
-          .select('id, barcode, name, stock, cost')
-          .or(`barcode.eq.${clean},sku.eq.${clean}`)
-          .limit(1)
-          .maybeSingle();
-        if (prod) return { product: prod, units: 1, isPackage: false };
-
-        const { data: pkg, error: pkgError } = await client
-          .from('product_packages')
-          .select('units, products(id, barcode, name, stock, cost)')
-          .eq('barcode', clean)
-          .maybeSingle();
-        if (pkg && pkg.products) return { product: pkg.products, units: pkg.units, isPackage: true };
-        if (!prodError && !pkgError) return null; // Consultó bien y no existe
-      } catch (e) {}
-    }
-
-    // Respaldo local
-    const products = this.getInventoryProducts();
-    const prodLocal = products.find(p => p.barcode === clean || p.sku === clean);
-    if (prodLocal) return { product: prodLocal, units: 1, isPackage: false };
-
-    const pkgLocal = this.getLocalPackages().find(p => p.barcode === clean);
-    if (pkgLocal) {
-      const parent = products.find(p => Number(p.id) === Number(pkgLocal.product_id));
-      if (parent) return { product: parent, units: pkgLocal.units, isPackage: true };
-    }
-    return null;
-  },
-
-  /**
-   * Suma mercancía al stock. La lógica de cajas vive en el servidor
-   * (función receive_stock en Supabase). Sin internet se hace en este equipo.
-   */
-  async receiveStock(code, quantity, unitCost = null, source = 'Recepción') {
-    const qty = parseInt(quantity, 10) || 0;
-    const client = this.getClient();
-
-    if (client && isSupabaseConnected) {
-      try {
-        const { data, error } = await client.rpc('receive_stock', {
-          p_code: String(code).trim(),
-          p_quantity: qty,
-          p_unit_cost: unitCost,
-          p_source: source
-        });
-
-        if (!error && data) {
-          if (data.ok) await this.fetchProducts();
-          return data;
-        }
-        if (error && (error.code === 'PGRST202' || error.code === '42883')) {
-          return { ok: false, error: 'Falta ejecutar supabase/recepcion_mercancia.sql en Supabase.' };
-        }
-        // Error de la base de datos (no de red): no guardar localmente para no desincronizar
-        if (error && error.code) {
-          return { ok: false, error: error.message };
-        }
+        return { ok: true };
       } catch (e) {
-        console.warn('Sin conexión, se guarda la entrada en este equipo:', e);
+        return { ok: false, error: e.message };
       }
     }
-
-    return this.receiveStockLocal(code, qty, unitCost);
+    return { ok: false, error: 'Sin conexión' };
   },
 
-  receiveStockLocal(code, qty, unitCost) {
-    if (qty <= 0) return { ok: false, error: 'La cantidad debe ser mayor a 0' };
-
-    const clean = String(code).trim();
-    const products = this.getInventoryProducts();
-    let units = 1;
-    let isPackage = false;
-    let product = products.find(p => p.barcode === clean || p.sku === clean);
-
-    if (!product) {
-      const pkg = this.getLocalPackages().find(p => p.barcode === clean);
-      if (pkg) {
-        product = products.find(p => Number(p.id) === Number(pkg.product_id));
-        units = pkg.units;
-        isPackage = true;
-      }
-    }
-
-    if (!product) return { ok: false, error: 'Código no registrado: ' + clean };
-
-    const added = qty * units;
-    product.stock = (parseInt(product.stock, 10) || 0) + added;
-    if (unitCost && unitCost > 0) product.cost = Math.round((unitCost / units) * 100) / 100;
-    safeSetStorage('pos_inventory_products', JSON.stringify(products));
-
-    return {
-      ok: true,
-      offline: true,
-      product_id: product.id,
-      product_name: product.name,
-      is_package: isPackage,
-      units_per_package: units,
-      units_added: added,
-      new_stock: product.stock,
-      unit_cost: product.cost
-    };
-  },
-
-  /** ¿Esta factura (UUID del timbre) ya se había cargado? */
   async isInvoiceReceived(uuid) {
     if (!uuid) return false;
-    const local = JSON.parse(safeGetStorage('pos_received_invoices') || '[]');
-    if (local.includes(uuid)) return true;
-
     const client = this.getClient();
-    if (client && isSupabaseConnected) {
+    if (client) {
       try {
-        const { data } = await client
-          .from('supplier_invoices')
-          .select('uuid')
-          .eq('uuid', uuid)
-          .maybeSingle();
+        const { data } = await client.from('supplier_invoices').select('uuid').eq('uuid', uuid).maybeSingle();
         return !!data;
       } catch (e) {}
     }
@@ -934,12 +856,8 @@ const PosDataService = {
 
   async markInvoiceReceived(invoice) {
     if (!invoice.uuid) return;
-    const local = JSON.parse(safeGetStorage('pos_received_invoices') || '[]');
-    local.push(invoice.uuid);
-    safeSetStorage('pos_received_invoices', JSON.stringify(local));
-
     const client = this.getClient();
-    if (client && isSupabaseConnected) {
+    if (client) {
       try {
         await client.from('supplier_invoices').insert([{
           uuid: invoice.uuid,
@@ -950,38 +868,6 @@ const PosDataService = {
           pieces_added: invoice.piecesAdded
         }]);
       } catch (e) {}
-    }
-  },
-
-  /** Avisa cuando otro equipo (ej. el celular) cambia productos */
-  subscribeToProducts(onChange) {
-    const client = this.getClient();
-    if (!client || !isSupabaseConnected || typeof client.channel !== 'function') return null;
-    try {
-      return client
-        .channel('products-live')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => onChange())
-        .subscribe();
-    } catch (e) {
-      return null;
-    }
-  },
-
-  /**
-   * Registra corte de caja en Supabase
-   */
-  async registerCashCut(cutData) {
-    const client = this.getClient();
-    if (client && isSupabaseConnected) {
-      try {
-        const { data, error } = await client
-          .from('cash_cuts')
-          .insert([cutData])
-          .select();
-        if (!error) console.log('Corte de caja registrado en Supabase:', data);
-      } catch (err) {
-        console.warn('Error guardando corte en Supabase:', err);
-      }
     }
   }
 };

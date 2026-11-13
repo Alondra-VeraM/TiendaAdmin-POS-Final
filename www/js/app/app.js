@@ -54,10 +54,12 @@ function executeSwitchView(viewName) {
   const inventoryViewContainer = document.getElementById('inventoryViewContainer');
   const salesHistoryViewContainer = document.getElementById('salesHistoryViewContainer');
   const cashCutViewContainer = document.getElementById('cashCutViewContainer');
+  const reportsViewContainer = document.getElementById('reportsViewContainer');
   const navPosBtn = document.getElementById('navPosBtn');
   const navInventoryBtn = document.getElementById('navInventoryBtn');
   const navSalesHistoryBtn = document.getElementById('navSalesHistoryBtn');
   const navCashCutBtn = document.getElementById('navCashCutBtn');
+  const navReportsBtn = document.getElementById('navReportsBtn');
   const allNavLinks = document.querySelectorAll('.sidebar-menu .nav-link');
 
   allNavLinks.forEach(link => {
@@ -69,6 +71,7 @@ function executeSwitchView(viewName) {
     if (posViewContainer) posViewContainer.style.display = 'none';
     if (salesHistoryViewContainer) salesHistoryViewContainer.style.display = 'none';
     if (cashCutViewContainer) cashCutViewContainer.style.display = 'none';
+    if (reportsViewContainer) reportsViewContainer.style.display = 'none';
     if (inventoryViewContainer) inventoryViewContainer.style.display = 'flex';
     if (navInventoryBtn) navInventoryBtn.classList.add('active', 'nav-active');
     if (typeof window.renderInventory === 'function') {
@@ -83,6 +86,7 @@ function executeSwitchView(viewName) {
     if (posViewContainer) posViewContainer.style.display = 'none';
     if (inventoryViewContainer) inventoryViewContainer.style.display = 'none';
     if (cashCutViewContainer) cashCutViewContainer.style.display = 'none';
+    if (reportsViewContainer) reportsViewContainer.style.display = 'none';
     if (salesHistoryViewContainer) salesHistoryViewContainer.style.display = 'flex';
     if (navSalesHistoryBtn) navSalesHistoryBtn.classList.add('active', 'nav-active');
     if (typeof window.renderSalesHistory === 'function') {
@@ -97,6 +101,7 @@ function executeSwitchView(viewName) {
     if (posViewContainer) posViewContainer.style.display = 'none';
     if (inventoryViewContainer) inventoryViewContainer.style.display = 'none';
     if (salesHistoryViewContainer) salesHistoryViewContainer.style.display = 'none';
+    if (reportsViewContainer) reportsViewContainer.style.display = 'none';
     if (cashCutViewContainer) cashCutViewContainer.style.display = 'flex';
     if (navCashCutBtn) navCashCutBtn.classList.add('active', 'nav-active');
     if (typeof window.renderCashCut === 'function') {
@@ -104,13 +109,27 @@ function executeSwitchView(viewName) {
     }
     const inputEfectivoContado = document.getElementById('inputEfectivoContado');
     if (inputEfectivoContado) inputEfectivoContado.focus();
+  } else if (viewName === 'reports') {
+    if (posViewContainer) posViewContainer.style.display = 'none';
+    if (inventoryViewContainer) inventoryViewContainer.style.display = 'none';
+    if (salesHistoryViewContainer) salesHistoryViewContainer.style.display = 'none';
+    if (cashCutViewContainer) cashCutViewContainer.style.display = 'none';
+    if (reportsViewContainer) reportsViewContainer.style.display = 'flex';
+    if (navReportsBtn) navReportsBtn.classList.add('active', 'nav-active');
+    if (typeof window.loadReportsData === 'function') {
+      window.loadReportsData();
+    }
   } else {
     // POS View
     if (inventoryViewContainer) inventoryViewContainer.style.display = 'none';
     if (salesHistoryViewContainer) salesHistoryViewContainer.style.display = 'none';
     if (cashCutViewContainer) cashCutViewContainer.style.display = 'none';
+    if (reportsViewContainer) reportsViewContainer.style.display = 'none';
     if (posViewContainer) posViewContainer.style.display = 'flex';
     if (navPosBtn) navPosBtn.classList.add('active');
+    if (typeof window.checkShiftState === 'function') {
+      window.checkShiftState();
+    }
     const cartBarcodeInput = document.getElementById('cartBarcodeInput');
     if (cartBarcodeInput) cartBarcodeInput.focus();
   }
@@ -244,6 +263,7 @@ function initApp() {
   if (typeof window.initInventory === 'function') window.initInventory();
   if (typeof window.initSalesHistory === 'function') window.initSalesHistory();
   if (typeof window.initCutCash === 'function') window.initCutCash();
+  if (typeof window.initReports === 'function') window.initReports();
 
   // 3. Inicializar Punto de Venta (POS) y sus submódulos
   if (typeof window.initPos === 'function') window.initPos();
@@ -265,6 +285,8 @@ function initApp() {
         window.switchView('sales-history');
       } else if (targetView === 'cash-cut' || targetView === 'cash-closing') {
         window.switchView('cash-cut');
+      } else if (targetView === 'reports') {
+        window.switchView('reports');
       } else if (targetView === 'shrinkage') {
         window.switchView('inventory');
         if (typeof window.openShrinkageModal === 'function') window.openShrinkageModal();

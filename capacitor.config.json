@@ -1,6 +1,6 @@
 {
   "appId": "com.pos.retail",
-  "appName": "Lector POS",
+  "appName": "TiendaAdmin POS",
   "webDir": "www",
   "bundledWebRuntime": false,
   "server": {

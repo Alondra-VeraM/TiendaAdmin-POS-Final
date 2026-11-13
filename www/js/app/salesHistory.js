@@ -78,13 +78,22 @@ function initSalesHistory() {
   }
 
   function getPaymentBadgeHtml(method) {
-    switch (method) {
+    const cleanMethod = (method || '').toLowerCase();
+    switch (cleanMethod) {
       case 'cash':
+      case 'efectivo':
         return `<span class="badge-pay-method badge-pay-cash"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"></rect><circle cx="12" cy="12" r="2"></circle><path d="M6 12h.01M18 12h.01"></path></svg>Efectivo</span>`;
+      case 'card':
+      case 'tarjeta':
+        return `<span class="badge-pay-method badge-pay-card"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"></rect><line x1="2" y1="10" x2="22" y2="10"></line></svg>Tarjeta</span>`;
+      case 'transfer':
+      case 'transferencia':
+        return `<span class="badge-pay-method" style="background:#e0f2fe;color:#0369a1;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;display:inline-block;vertical-align:middle;margin-right:4px;"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>Transferencia</span>`;
+      case 'mixed':
+      case 'mixto':
+        return `<span class="badge-pay-method" style="background:#fef3c7;color:#92400e;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;display:inline-block;vertical-align:middle;margin-right:4px;"><circle cx="9" cy="12" r="4"></circle><circle cx="15" cy="12" r="4"></circle></svg>Mixto</span>`;
       case 'qr':
         return `<span class="badge-pay-method badge-pay-qr"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>Pago QR</span>`;
-      case 'card':
-        return `<span class="badge-pay-method badge-pay-card"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"></rect><line x1="2" y1="10" x2="22" y2="10"></line></svg>Tarjeta</span>`;
       case 'codi':
       default:
         return `<span class="badge-pay-method badge-pay-codi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>CoDi</span>`;

@@ -435,9 +435,15 @@ app.get('/api/health', (req, res) => {
 // RUTAS POS LOCAL MASTER (ALTA VELOCIDAD Y ACTUALIZACIÓN ATÓMICA DE STOCK)
 // ==============================================================================
 
-// 1. Obtener todos los productos del inventario local
-app.get('/api/pos/products', (req, res) => {
+// 1. Obtener todos los productos del inventario (Supabase primario)
+app.get('/api/pos/products', async (req, res) => {
   try {
+    if (supabase) {
+      const { data, error } = await supabase.from('products').select('*').eq('is_active', true).order('name');
+      if (!error && Array.isArray(data) && data.length > 0) {
+        return res.json({ ok: true, count: data.length, products: data });
+      }
+    }
     const products = localDb.getProducts();
     res.json({ ok: true, count: products.length, products });
   } catch (err) {
@@ -445,14 +451,44 @@ app.get('/api/pos/products', (req, res) => {
   }
 });
 
-// 2. Procesar venta atómica con descuento inmediato de stock
-app.post('/api/pos/sale', (req, res) => {
+// 2. Procesar venta atómica en Supabase con descuento y validación de turno
+app.post('/api/pos/sale', async (req, res) => {
   try {
-    const { folio, total_items, total_pieces, subtotal, discount, total_net, payment_method, cart, items } = req.body || {};
+    const { folio, total_items, total_pieces, subtotal, discount, total_net, payment_method, cart, items, terminal_code, terminal_name, cashier_name } = req.body || {};
     const saleItems = cart || items || [];
     
     if (!saleItems || saleItems.length === 0) {
       return res.status(400).json({ ok: false, error: 'La venta debe contener al menos 1 artículo' });
+    }
+
+    if (supabase) {
+      const formattedItems = saleItems.map(it => ({
+        id: it.id,
+        barcode: it.barcode || it.sku,
+        sku: it.sku || it.barcode,
+        name: it.name,
+        unitPrice: parseFloat(it.unitPrice || it.price || 0),
+        quantity: parseInt(it.quantity, 10) || 1,
+        discount: parseFloat(it.discount || 0),
+        subtotal: parseFloat(it.subtotal || ((it.unitPrice || it.price || 0) * (it.quantity || 1)))
+      }));
+
+      const { data, error } = await supabase.rpc('register_sale_atomic', {
+        p_folio: folio,
+        p_terminal_code: terminal_code || 'C1',
+        p_terminal_name: terminal_name || 'Caja 1',
+        p_cashier_name: cashier_name || 'Cajero',
+        p_subtotal: parseFloat(subtotal || total_net || 0),
+        p_discount: parseFloat(discount || 0),
+        p_total_net: parseFloat(total_net || 0),
+        p_payment_method: payment_method || 'cash',
+        p_items: formattedItems
+      });
+
+      if (error) {
+        return res.status(400).json({ ok: false, error: error.message });
+      }
+      return res.json(data);
     }
 
     const result = localDb.processSale({
@@ -473,10 +509,24 @@ app.post('/api/pos/sale', (req, res) => {
 });
 
 // 3. Cancelar venta y restituir existencias
-app.post('/api/pos/cancel-sale', (req, res) => {
+app.post('/api/pos/cancel-sale', async (req, res) => {
   try {
     const { folio, reason } = req.body || {};
     if (!folio) return res.status(400).json({ ok: false, error: 'Folio requerido' });
+
+    if (supabase) {
+      const { error } = await supabase
+        .from('sales')
+        .update({
+          status: 'cancelled',
+          cancelled_at: new Date().toISOString(),
+          cancellation_reason: reason || 'Cancelación de venta'
+        })
+        .eq('folio', folio);
+
+      if (!error) return res.json({ ok: true, folio, status: 'cancelled' });
+    }
+
     const result = localDb.cancelSale(folio, reason);
     res.json(result);
   } catch (err) {
@@ -484,9 +534,20 @@ app.post('/api/pos/cancel-sale', (req, res) => {
   }
 });
 
-// 4. Historial de ventas del día
-app.get('/api/pos/sales', (req, res) => {
+// 4. Historial de ventas (Supabase primario)
+app.get('/api/pos/sales', async (req, res) => {
   try {
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('sales')
+        .select('*, sale_items(*)')
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+      if (!error && Array.isArray(data)) {
+        return res.json({ ok: true, count: data.length, sales: data });
+      }
+    }
     const sales = localDb.getTodaySales();
     res.json({ ok: true, count: sales.length, sales });
   } catch (err) {

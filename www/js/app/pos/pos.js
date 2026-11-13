@@ -839,40 +839,195 @@ function initPos() {
 
   // Procesar actualización de inventario recibida del celular
 
+  // =========================================================================
+  // CONTROL DE ESTADO DE TURNO, BLOQUEO DE VENTAS Y SELECCIÓN DE CAJA
+  // =========================================================================
+
+  async function checkShiftState() {
+    const terminalInfo = typeof window.getActiveTerminal === 'function' ? window.getActiveTerminal() : { code: 'C1', name: 'Caja 1' };
+    
+    // Actualizar insignias de terminal
+    const headerCajaBadge = document.getElementById('headerCajaBadge');
+    if (headerCajaBadge) headerCajaBadge.textContent = terminalInfo.name;
+    const cutCajaName = document.getElementById('cutCajaName');
+    if (cutCajaName) cutCajaName.textContent = terminalInfo.name;
+
+    let shiftData = null;
+    if (window.PosDataService && typeof window.PosDataService.getTerminalShift === 'function') {
+      shiftData = await window.PosDataService.getTerminalShift(terminalInfo.code);
+    }
+
+    window.currentShift = shiftData;
+
+    const btnCheckoutEl = document.getElementById('btnCheckout');
+    const shiftNameFooter = document.querySelector('.settlement-footer .shift-name');
+    let shiftClosedBanner = document.getElementById('shiftClosedBanner');
+
+    if (shiftData && shiftData.is_open) {
+      // TURNO EN CURSO
+      if (shiftClosedBanner) shiftClosedBanner.style.display = 'none';
+      if (btnCheckoutEl) {
+        btnCheckoutEl.classList.remove('btn-checkout-disabled');
+        btnCheckoutEl.removeAttribute('disabled');
+        btnCheckoutEl.title = 'Completar venta actual';
+      }
+      if (shiftNameFooter) {
+        shiftNameFooter.innerHTML = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;margin-right:6px;"></span>${terminalInfo.name} • Turno Abierto`;
+      }
+    } else {
+      // TURNO CERRADO: BLOQUEO ESTRICTO DE VENTAS
+      if (!shiftClosedBanner) {
+        shiftClosedBanner = document.createElement('div');
+        shiftClosedBanner.id = 'shiftClosedBanner';
+        shiftClosedBanner.className = 'shift-closed-banner';
+        shiftClosedBanner.innerHTML = `
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;background:#fee2e2;border:1px solid #f87171;color:#991b1b;padding:10px 14px;border-radius:8px;margin-bottom:12px;">
+            <div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;">
+              <svg style="width:20px;height:20px;flex-shrink:0;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+              </svg>
+              <span>${terminalInfo.name} CERRADA: Ventas bloqueadas hasta abrir un nuevo turno.</span>
+            </div>
+            <button type="button" id="btnOpenShiftFromPos" style="background:#dc2626;color:#ffffff;border:none;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">
+              Abrir Nuevo Turno
+            </button>
+          </div>
+        `;
+        const currentSaleCard = document.querySelector('.current-sale-card');
+        if (currentSaleCard && currentSaleCard.parentNode) {
+          currentSaleCard.parentNode.insertBefore(shiftClosedBanner, currentSaleCard);
+        }
+        const btnOpen = document.getElementById('btnOpenShiftFromPos');
+        if (btnOpen) {
+          btnOpen.addEventListener('click', () => window.openNewShiftModal());
+        }
+      } else {
+        shiftClosedBanner.style.display = 'block';
+      }
+
+      if (btnCheckoutEl) {
+        btnCheckoutEl.classList.add('btn-checkout-disabled');
+        btnCheckoutEl.setAttribute('disabled', 'true');
+        btnCheckoutEl.title = 'Caja cerrada. Debe abrir un nuevo turno para realizar ventas.';
+      }
+      if (shiftNameFooter) {
+        shiftNameFooter.innerHTML = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ef4444;margin-right:6px;"></span>${terminalInfo.name} • Turno Cerrado`;
+      }
+    }
+
+    return shiftData;
+  }
+
+  window.checkShiftState = checkShiftState;
+
+  // Apertura de turno
+  window.openNewShiftModal = function() {
+    const modal = document.getElementById('modalOpenShift');
+    const terminalInfo = typeof window.getActiveTerminal === 'function' ? window.getActiveTerminal() : { code: 'C1', name: 'Caja 1' };
+    if (modal) {
+      const openShiftCajaName = document.getElementById('openShiftCajaName');
+      const openShiftFundInput = document.getElementById('openShiftFundInput');
+      if (openShiftCajaName) openShiftCajaName.textContent = `${terminalInfo.name} (${terminalInfo.code})`;
+      if (openShiftFundInput) openShiftFundInput.value = '1000.00';
+      modal.style.display = 'flex';
+    } else {
+      const fund = prompt(`Abrir turno en ${terminalInfo.name}\nIngrese el fondo inicial en efectivo:`, '1000.00');
+      if (fund != null) {
+        window.confirmOpenShift(parseFloat(fund) || 1000.00);
+      }
+    }
+  };
+
+  window.confirmOpenShift = async function(fund) {
+    const terminalInfo = typeof window.getActiveTerminal === 'function' ? window.getActiveTerminal() : { code: 'C1', name: 'Caja 1' };
+    const cashierName = (window.currentSessionUser && window.currentSessionUser.name) || 'Elena R.';
+    const initialFund = parseFloat(fund) || 1000.00;
+
+    const res = await window.PosDataService.openTerminalShift(
+      terminalInfo.code,
+      terminalInfo.name,
+      cashierName,
+      initialFund
+    );
+
+    const modal = document.getElementById('modalOpenShift');
+    if (modal) modal.style.display = 'none';
+
+    if (!res || !res.ok) {
+      showModal('Error al abrir turno', res?.error || 'No se pudo abrir el turno.');
+      return;
+    }
+
+    await checkShiftState();
+    if (typeof renderCashCut === 'function') renderCashCut();
+
+    showModal(
+      'Turno Abierto con Éxito',
+      `Se ha creado un nuevo turno en Supabase para ${terminalInfo.name}.\n\n` +
+      `• Fondo inicial: $${initialFund.toFixed(2)}\n` +
+      `• Cajero: ${cashierName}\n\n` +
+      `Las ventas en esta caja han sido desbloqueadas.`
+    );
+  };
+
+  // Selector de terminal (Caja 1 o Caja 2)
+  const headerCajaBadge = document.getElementById('headerCajaBadge');
+  if (headerCajaBadge) {
+    headerCajaBadge.style.cursor = 'pointer';
+    headerCajaBadge.title = 'Click para cambiar entre Caja 1 y Caja 2';
+    headerCajaBadge.addEventListener('click', () => {
+      const current = typeof window.getActiveTerminal === 'function' ? window.getActiveTerminal() : { code: 'C1' };
+      const nextCode = current.code === 'C1' ? 'C2' : 'C1';
+      const nextName = nextCode === 'C2' ? 'Caja 2' : 'Caja 1';
+
+      if (confirm(`¿Cambiar este equipo a "${nextName}" (${nextCode})?\n\nAmbas cajas comparten inventario pero gestionan sus propios turnos y cortes de caja en Supabase.`)) {
+        window.setActiveTerminal(nextCode);
+        checkShiftState();
+        if (typeof renderCashCut === 'function') renderCashCut();
+        if (typeof refreshSalesFromSupabase === 'function') refreshSalesFromSupabase();
+        showModal('Terminal Activa Actualizada', `Este dispositivo está configurado ahora como ${nextName} (${nextCode}).`);
+      }
+    });
+  }
+
+  // Verificar turno al inicio
+  checkShiftState();
+
   function initLanScannerListener() {
     let isFetching = false;
-    const apiBase = (window.location.protocol === 'file:') ? 'http://localhost:3000' : '';
-
-    setInterval(async () => {
-      if (isFetching) return;
-      isFetching = true;
-      try {
-        const res = await fetch(`${apiBase}/api/pos/scans`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.ok && Array.isArray(data.scans) && data.scans.length > 0) {
-            for (const item of data.scans) {
-              const isInv = isInventoryViewActive();
-              if (isInv) {
-                // Si la pantalla de la PC está en Inventario, abrir el recuadro de inmediato con la información del producto
-                handleInventoryBarcodeScan(item.barcode, item);
-              } else if (item.mode === 'inventory_add') {
-                handleMobileInventoryAdd(item);
-              } else {
-                await handleMobileScanToPos(item);
+    // Solo consultar escáner LAN si estamos en entorno Node local
+    if (window.location.protocol === 'file:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      const apiBase = '';
+      setInterval(async () => {
+        if (isFetching) return;
+        isFetching = true;
+        try {
+          const res = await fetch(`${apiBase}/api/pos/scans`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.ok && Array.isArray(data.scans) && data.scans.length > 0) {
+              for (const item of data.scans) {
+                const isInv = isInventoryViewActive();
+                if (isInv) {
+                  handleInventoryBarcodeScan(item.barcode, item);
+                } else if (item.mode === 'inventory_add') {
+                  handleMobileInventoryAdd(item);
+                } else {
+                  await handleMobileScanToPos(item);
+                }
               }
             }
           }
+        } catch (err) {
+        } finally {
+          isFetching = false;
         }
-      } catch (err) {
-        // En caso de error de red o servidor apagado
-      } finally {
-        isFetching = false;
-      }
-    }, 500);
+      }, 1500);
+    }
   }
   initLanScannerListener();
-
 
   // Exponer funciones principales del POS en window
   window.getProductIconSvg = getProductIconSvg;

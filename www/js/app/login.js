@@ -95,6 +95,49 @@ function initLoginAuth() {
     });
   }
 
+  // Selección de terminal persistente en login (Caja 1 o Caja 2)
+  const loginTerminalC1 = document.getElementById('loginTerminalC1');
+  const loginTerminalC2 = document.getElementById('loginTerminalC2');
+
+  function updateLoginTerminalUI(code) {
+    if (loginTerminalC1 && loginTerminalC2) {
+      if (code === 'C2') {
+        loginTerminalC2.style.borderColor = '#2563eb';
+        loginTerminalC2.style.background = '#eff6ff';
+        loginTerminalC2.style.color = '#1e40af';
+        loginTerminalC1.style.borderColor = '#cbd5e1';
+        loginTerminalC1.style.background = '#fff';
+        loginTerminalC1.style.color = '#64748b';
+      } else {
+        loginTerminalC1.style.borderColor = '#2563eb';
+        loginTerminalC1.style.background = '#eff6ff';
+        loginTerminalC1.style.color = '#1e40af';
+        loginTerminalC2.style.borderColor = '#cbd5e1';
+        loginTerminalC2.style.background = '#fff';
+        loginTerminalC2.style.color = '#64748b';
+      }
+    }
+  }
+
+  const currentTerm = typeof window.getActiveTerminal === 'function' ? window.getActiveTerminal() : { code: 'C1' };
+  updateLoginTerminalUI(currentTerm.code);
+
+  if (loginTerminalC1) {
+    loginTerminalC1.addEventListener('click', () => {
+      window.setActiveTerminal('C1');
+      updateLoginTerminalUI('C1');
+      if (typeof window.checkShiftState === 'function') window.checkShiftState();
+    });
+  }
+
+  if (loginTerminalC2) {
+    loginTerminalC2.addEventListener('click', () => {
+      window.setActiveTerminal('C2');
+      updateLoginTerminalUI('C2');
+      if (typeof window.checkShiftState === 'function') window.checkShiftState();
+    });
+  }
+
   // Toggle de visibilidad para contraseña
   if (btnTogglePasswordVisibility && loginAdminPasswordInput) {
     btnTogglePasswordVisibility.addEventListener('click', (e) => {
