@@ -43,17 +43,31 @@ function initSalesHistory() {
     let totalAccumulatedNum = 0;
     let totalCashNum = 0;
 
-    salesHistoryList.forEach(item => {
-      if (item.status === 'completed') {
-        totalTicketsNum++;
-        const total = parseFloat(item.total) || 0;
-        totalAccumulatedNum += total;
-        const pm = (item.paymentMethod || '').toLowerCase();
-        if (pm === 'cash' || pm === 'efectivo') {
-          totalCashNum += total;
+    const summary = window.PosApp && window.PosApp.dailySalesSummary;
+    if (salesHistoryFilter.caja === 'all' && salesHistoryFilter.payment === 'all' && salesHistoryFilter.status === 'all' && !salesHistoryFilter.search && summary && summary.ok) {
+      // Suma exacta del día agarrada directamente de la base de datos
+      totalTicketsNum = summary.total_sales_count || 0;
+      totalAccumulatedNum = parseFloat(summary.total_sales_amount || 0);
+      totalCashNum = parseFloat(summary.cash_total || 0);
+    } else {
+      salesHistoryList.forEach(item => {
+        if (item.status === 'completed') {
+          if (salesHistoryFilter.caja === 'caja1' && item.cajaCode !== 'C1') return;
+          if (salesHistoryFilter.caja === 'caja2' && item.cajaCode !== 'C2') return;
+          if (salesHistoryFilter.payment !== 'all' && item.paymentMethod !== salesHistoryFilter.payment) return;
+
+          totalTicketsNum++;
+          const total = parseFloat(item.total) || 0;
+          totalAccumulatedNum += total;
+          const pm = (item.paymentMethod || '').toLowerCase();
+          if (pm === 'cash' || pm === 'efectivo') {
+            totalCashNum += total;
+          } else if (pm === 'mixed') {
+            totalCashNum += parseFloat(item.cashAmount || 0);
+          }
         }
-      }
-    });
+      });
+    }
 
     const avgTicketNum = totalTicketsNum > 0 ? (totalAccumulatedNum / totalTicketsNum) : 0;
 

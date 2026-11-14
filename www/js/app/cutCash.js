@@ -97,11 +97,20 @@ function initCutCash() {
       if (elFootCount) elFootCount.textContent = totalSalesCount;
       if (elFootAmount) elFootAmount.textContent = `$${totalSalesAmount.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-      // Movimientos
+      // Movimientos de caja registrados en el día / turno
       const elMoveVentasCount = document.getElementById('cutMoveVentasCount');
       const elMoveVentasAmount = document.getElementById('cutMoveVentasAmount');
       if (elMoveVentasCount) elMoveVentasCount.textContent = totalSalesCount;
       if (elMoveVentasAmount) elMoveVentasAmount.textContent = `$${totalSalesAmount.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+      const elMoveEntriesAmount = document.getElementById('cutMoveEntriesAmount');
+      if (elMoveEntriesAmount) elMoveEntriesAmount.textContent = `+ $${parseFloat(shift.cash_inflows || 0).toFixed(2)}`;
+
+      const elMoveExitsAmount = document.getElementById('cutMoveExitsAmount');
+      if (elMoveExitsAmount) elMoveExitsAmount.textContent = `- $${parseFloat(shift.cash_outflows || 0).toFixed(2)}`;
+
+      const elMoveSupplierAmount = document.getElementById('cutMoveSupplierAmount');
+      if (elMoveSupplierAmount) elMoveSupplierAmount.textContent = `- $${parseFloat(shift.supplier_payouts || 0).toFixed(2)}`;
 
       // Conteo de efectivo esperado
       const elExpectedCash = document.getElementById('cutExpectedCash');

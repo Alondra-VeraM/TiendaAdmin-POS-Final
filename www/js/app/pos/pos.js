@@ -384,6 +384,15 @@ function initPos() {
 
   function addProductToCart(product, quantity = 1) {
     if (!product) return;
+
+    // 1. APERTURA DE CAJA: La caja debe estar abierta para empezar a vender
+    if (window.currentShift && !window.currentShift.is_open) {
+      if (typeof window.openNewShiftModal === 'function') {
+        window.openNewShiftModal();
+      }
+      return;
+    }
+
     const qty = parseInt(quantity, 10) || 1;
 
     // Normalización de identificadores para no duplicar items

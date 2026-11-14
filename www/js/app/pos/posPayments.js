@@ -117,13 +117,16 @@ function initPosPayments() {
     const shiftData = await window.PosDataService.getTerminalShift(terminalInfo.code);
 
     if (!shiftData || !shiftData.is_open) {
-      showModal(
-        'Caja Cerrada - Ventas Bloqueadas',
-        `La ${terminalInfo.name} (${terminalInfo.code}) se encuentra actualmente CERRADA.\n\n` +
-        `No se pueden registrar ventas hasta que se abra un nuevo turno.\n` +
-        `Por favor, abre un turno desde el botón "Abrir Turno" para comenzar a vender.`
-      );
       if (typeof window.checkShiftState === 'function') window.checkShiftState();
+      if (typeof window.openNewShiftModal === 'function') {
+        window.openNewShiftModal();
+      } else {
+        showModal(
+          'Apertura de Caja Requerida',
+          `La ${terminalInfo.name} (${terminalInfo.code}) se encuentra CERRADA.\n\n` +
+          `Debe realizar la Apertura de Caja e ingresar el fondo inicial para comenzar a vender.`
+        );
+      }
       return;
     }
 

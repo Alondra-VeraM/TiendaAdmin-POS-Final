@@ -196,6 +196,50 @@ function getMexicoDateString(date = new Date()) {
 window.getMexicoDateString = getMexicoDateString;
 
 async function refreshSalesFromSupabase() {
+  if (dataService && typeof dataService.getDailySalesSummary === 'function') {
+    const summary = await dataService.getDailySalesSummary('all');
+    if (summary && summary.ok) {
+      window.PosApp.dailySalesSummary = summary;
+      const formattedSales = (summary.sales || []).map(s => {
+        const dt = new Date(s.created_at);
+        const pad = (n) => String(n).padStart(2, '0');
+        const timeStr = !isNaN(dt.getTime()) ? `${pad(dt.getHours())}:${pad(dt.getMinutes())} hrs` : '--:--';
+        const itemsList = Array.isArray(s.items) ? s.items : [];
+        const itemsSummaryText = `${s.total_pieces || itemsList.length} producto${(s.total_pieces || itemsList.length) === 1 ? '' : 's'}`;
+        const itemsDetailText = itemsList.map(it => `${it.name || it.product_name} x${it.quantity}`).join(', ');
+
+        return {
+          id: s.id,
+          folio: s.folio,
+          date: timeStr,
+          created_at: s.created_at,
+          cajaCode: s.terminal_code || 'C1',
+          cajaName: s.terminal_name || (s.terminal_code === 'C2' ? 'Caja 2' : 'Caja 1'),
+          cashier: s.cashier_name || 'Cajero',
+          itemsCount: s.total_pieces || itemsList.length,
+          itemsSummary: itemsSummaryText,
+          itemsDetail: itemsDetailText,
+          items: itemsList.map(it => ({
+            name: it.name || it.product_name,
+            quantity: it.quantity,
+            unitPrice: parseFloat(it.unitPrice || it.unit_price || 0),
+            total: parseFloat(it.subtotal || 0)
+          })),
+          paymentMethod: s.payment_method,
+          cashAmount: parseFloat(s.cash_amount || 0),
+          cardAmount: parseFloat(s.card_amount || 0),
+          transferAmount: parseFloat(s.transfer_amount || 0),
+          total: parseFloat(s.total_net || 0),
+          status: s.status || 'completed'
+        };
+      });
+      window.PosApp.salesHistoryList = formattedSales;
+      if (typeof window.renderSalesHistory === 'function') window.renderSalesHistory();
+      if (typeof window.renderCashCut === 'function') window.renderCashCut();
+      return;
+    }
+  }
+
   if (dataService && typeof dataService.fetchSales === 'function') {
     const sales = await dataService.fetchSales();
     window.PosApp.allSalesHistory = Array.isArray(sales) ? sales : [];

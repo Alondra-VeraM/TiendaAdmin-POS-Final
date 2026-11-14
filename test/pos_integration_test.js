@@ -157,6 +157,12 @@ async function runTestSuite() {
   assert(shiftC1Live.data.is_open, '7a. El turno de Caja 1 se reporta ABIERTO');
   assert(parseFloat(shiftC1Live.data.live_totals.total_sales_amount) >= 75.00,
     `7b. La venta se incluye en el corte del turno en vivo: $${shiftC1Live.data.live_totals.total_sales_amount}`);
+
+  // 7c. La suma de todo lo del día se agarra de la base de datos según su desglose
+  const resDailySummary = await supabase.rpc('get_daily_sales_summary', { p_terminal_code: 'all' });
+  assert(resDailySummary.data && resDailySummary.data.ok, '7c. Resumen del día obtenido directamente desde la base de datos');
+  assert(resDailySummary.data.total_sales_count >= 1, `7d. Total de ventas de hoy en BD: ${resDailySummary.data.total_sales_count}`);
+  assert(parseFloat(resDailySummary.data.total_sales_amount) >= 75.00, `7e. Suma acumulada de hoy en BD: $${resDailySummary.data.total_sales_amount}`);
   passed++;
 
   // ---------------------------------------------------------------------------

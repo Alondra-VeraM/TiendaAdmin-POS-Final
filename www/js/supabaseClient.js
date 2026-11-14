@@ -411,6 +411,51 @@ const PosDataService = {
   },
 
   /**
+   * Consulta la suma y desglose de todo lo del día actual directamente desde la base de datos
+   */
+  async getDailySalesSummary(terminalCode = 'all') {
+    const client = this.getClient();
+    if (!client) {
+      return { ok: false, error: 'Sin conexión con Supabase para consultar resumen diario.' };
+    }
+    try {
+      const { data, error } = await client.rpc('get_daily_sales_summary', {
+        p_terminal_code: terminalCode || 'all'
+      });
+      if (error) {
+        console.warn('Error en get_daily_sales_summary:', error);
+        return { ok: false, error: error.message };
+      }
+      return data;
+    } catch (err) {
+      console.warn('Error llamando a get_daily_sales_summary:', err);
+      return { ok: false, error: err.message };
+    }
+  },
+
+  /**
+   * Registra un movimiento de caja (entrada, salida, pago proveedor) en la base de datos
+   */
+  async registerCashMovement(terminalCode, movementType, amount, concept = '') {
+    const client = this.getClient();
+    if (!client) {
+      return { ok: false, error: 'Sin conexión con Supabase para registrar movimiento de caja.' };
+    }
+    try {
+      const { data, error } = await client.rpc('register_cash_movement', {
+        p_terminal_code: terminalCode,
+        p_movement_type: movementType,
+        p_amount: parseFloat(amount) || 0,
+        p_concept: concept || ''
+      });
+      if (error) return { ok: false, error: error.message };
+      return data;
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  },
+
+  /**
    * Consulta cortes de caja históricos para reportes de varios días
    */
   async fetchReports(startDate, endDate, terminalCode = 'all') {
