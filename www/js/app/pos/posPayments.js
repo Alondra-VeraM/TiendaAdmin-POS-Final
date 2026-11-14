@@ -275,9 +275,12 @@ function initPosPayments() {
     const folioBadge = document.getElementById('ticketFolio');
     if (folioBadge) folioBadge.textContent = `Folio ${state.folio}`;
 
-    // Refrescar inventario en segundo plano
+    // Refrescar inventario y ventas desde Supabase en segundo plano
     if (typeof window.refreshInventoryFromSupabase === 'function') {
       window.refreshInventoryFromSupabase();
+    }
+    if (typeof window.refreshSalesFromSupabase === 'function') {
+      window.refreshSalesFromSupabase();
     }
   }
 

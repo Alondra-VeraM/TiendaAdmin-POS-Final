@@ -957,12 +957,8 @@
         <!-- Shift Info Summary Bar -->
         <div class="cut-shift-info-bar">
           <div class="shift-info-item">
-            <span class="shift-info-label">Cajero</span>
-            <span class="shift-info-value" id="cutCashierName">Elena R.</span>
-          </div>
-          <div class="shift-info-item">
-            <span class="shift-info-label">Caja</span>
-            <span class="shift-info-value" id="cutCajaName">Caja 1</span>
+            <span class="shift-info-label">Identificador</span>
+            <span class="shift-info-value" id="cutCajaName" style="font-weight: 700; color: #2563eb;">Caja 1</span>
           </div>
           <div class="shift-info-item">
             <span class="shift-info-label">Apertura</span>
@@ -996,10 +992,10 @@
                 <table class="cut-table">
                   <thead>
                     <tr>
-                      <th style="width: 32%;">MÉTODO DE PAGO</th>
-                      <th style="width: 18%; text-align: center;">VENTAS</th>
-                      <th style="width: 25%; text-align: right;">IMPORTE</th>
-                      <th style="width: 25%; text-align: right;">% DEL TOTAL</th>
+                      <th style="width: 45%;">MÉTODO DE PAGO</th>
+                      <th style="width: 25%; text-align: center;">VENTAS</th>
+                      <th style="width: 30%; text-align: right;">IMPORTE</th>
+                      <th style="display: none;">% DEL TOTAL</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1012,13 +1008,8 @@
                       </td>
                       <td style="text-align: center;" id="cutCountCash">0</td>
                       <td style="text-align: right; font-weight: 600;" id="cutAmountCash">$0.00</td>
-                      <td>
-                        <div class="progress-col">
-                          <div class="progress-bar-bg">
-                            <div class="progress-bar-fill" style="width: 47%; background-color: #2563eb;"></div>
-                          </div>
-                          <span class="percent-text" id="cutPercentCash">0%</span>
-                        </div>
+                      <td style="display: none;">
+                        <span class="percent-text" id="cutPercentCash">0%</span>
                       </td>
                     </tr>
                     <tr>
@@ -1030,13 +1021,8 @@
                       </td>
                       <td style="text-align: center;" id="cutCountCard">0</td>
                       <td style="text-align: right; font-weight: 600;" id="cutAmountCard">$0.00</td>
-                      <td>
-                        <div class="progress-col">
-                          <div class="progress-bar-bg">
-                            <div class="progress-bar-fill" style="width: 28%; background-color: #2563eb;"></div>
-                          </div>
-                          <span class="percent-text" id="cutPercentCard">0%</span>
-                        </div>
+                      <td style="display: none;">
+                        <span class="percent-text" id="cutPercentCard">0%</span>
                       </td>
                     </tr>
                     <tr>
@@ -1048,13 +1034,8 @@
                       </td>
                       <td style="text-align: center;" id="cutCountTransfer">0</td>
                       <td style="text-align: right; font-weight: 600;" id="cutAmountTransfer">$0.00</td>
-                      <td>
-                        <div class="progress-col">
-                          <div class="progress-bar-bg">
-                            <div class="progress-bar-fill" style="width: 11%; background-color: #2563eb;"></div>
-                          </div>
-                          <span class="percent-text" id="cutPercentTransfer">0%</span>
-                        </div>
+                      <td style="display: none;">
+                        <span class="percent-text" id="cutPercentTransfer">0%</span>
                       </td>
                     </tr>
                     <tr>
@@ -1066,13 +1047,8 @@
                       </td>
                       <td style="text-align: center;" id="cutCountMixed">0</td>
                       <td style="text-align: right; font-weight: 600;" id="cutAmountMixed">$0.00</td>
-                      <td>
-                        <div class="progress-col">
-                          <div class="progress-bar-bg">
-                            <div class="progress-bar-fill" style="width: 5%; background-color: #2563eb;"></div>
-                          </div>
-                          <span class="percent-text" id="cutPercentMixed">0%</span>
-                        </div>
+                      <td style="display: none;">
+                        <span class="percent-text" id="cutPercentMixed">0%</span>
                       </td>
                     </tr>
                   </tbody>
@@ -1081,9 +1057,7 @@
                       <td>Total de ventas</td>
                       <td style="text-align: center;" id="cutFootTotalCount">0</td>
                       <td style="text-align: right;" id="cutFootTotalAmount">$0.00</td>
-                      <td style="text-align: right;">
-                        <span style="font-size: 12px; font-weight: 700; color: #0f172a;">100%</span>
-                      </td>
+                      <td style="display: none;"></td>
                     </tr>
                   </tfoot>
                 </table>

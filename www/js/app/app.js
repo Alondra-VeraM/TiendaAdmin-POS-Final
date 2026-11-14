@@ -184,10 +184,28 @@ async function refreshInventoryFromSupabase() {
 }
 window.refreshInventoryFromSupabase = refreshInventoryFromSupabase;
 
+// Helper de fecha en zona horaria de México
+function getMexicoDateString(date = new Date()) {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City' }).format(date);
+  } catch (e) {
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  }
+}
+window.getMexicoDateString = getMexicoDateString;
+
 async function refreshSalesFromSupabase() {
   if (dataService && typeof dataService.fetchSales === 'function') {
     const sales = await dataService.fetchSales();
-    window.PosApp.salesHistoryList = Array.isArray(sales) ? sales : [];
+    window.PosApp.allSalesHistory = Array.isArray(sales) ? sales : [];
+    const todayMexico = getMexicoDateString();
+    // Filtro estricto: El historial diario muestra ÚNICAMENTE las ventas del día actual en hora local de México
+    window.PosApp.salesHistoryList = window.PosApp.allSalesHistory.filter(s => {
+      if (!s || !s.created_at) return true;
+      const saleDate = getMexicoDateString(new Date(s.created_at));
+      return saleDate === todayMexico;
+    });
     if (typeof window.renderSalesHistory === 'function') window.renderSalesHistory();
     if (typeof window.renderCashCut === 'function') window.renderCashCut();
   }
@@ -205,9 +223,12 @@ window.addEventListener('supabase:data-synced', (e) => {
     if (typeof window.renderInventory === 'function') window.renderInventory();
   }
   if (e.detail && Array.isArray(e.detail.sales)) {
-    const today = new Date();
-    const todayDateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-    window.PosApp.salesHistoryList = e.detail.sales.filter(s => s && s.created_at && s.created_at.startsWith(todayDateStr));
+    window.PosApp.allSalesHistory = e.detail.sales;
+    const todayMexico = getMexicoDateString();
+    window.PosApp.salesHistoryList = e.detail.sales.filter(s => {
+      if (!s || !s.created_at) return true;
+      return getMexicoDateString(new Date(s.created_at)) === todayMexico;
+    });
     if (typeof window.renderSalesHistory === 'function') window.renderSalesHistory();
     if (typeof window.renderCashCut === 'function') window.renderCashCut();
   }

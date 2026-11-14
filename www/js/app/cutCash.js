@@ -62,11 +62,6 @@ function initCutCash() {
       const amountMixed = parseFloat(live.mixed_sales || 0);
       const expectedCash = parseFloat(live.expected_cash || (parseFloat(shift.initial_fund || 1000) + amountCash));
 
-      const percentCash = totalSalesAmount > 0 ? Math.round((amountCash / totalSalesAmount) * 100) : 0;
-      const percentCard = totalSalesAmount > 0 ? Math.round((amountCard / totalSalesAmount) * 100) : 0;
-      const percentTransfer = totalSalesAmount > 0 ? Math.round((amountTransfer / totalSalesAmount) * 100) : 0;
-      const percentMixed = totalSalesAmount > 0 ? Math.round((amountMixed / totalSalesAmount) * 100) : 0;
-
       // Resumen de ventas
       const cutTotalSalesHeader = document.getElementById('cutTotalSalesHeader');
       const cutTotalVentasCount = document.getElementById('cutTotalVentasCount');
@@ -75,24 +70,26 @@ function initCutCash() {
 
       // Por método de pago
       const elAmountCash = document.getElementById('cutAmountCash');
-      const elPercentCash = document.getElementById('cutPercentCash');
       if (elAmountCash) elAmountCash.textContent = `$${amountCash.toFixed(2)}`;
-      if (elPercentCash) elPercentCash.textContent = `${percentCash}%`;
 
       const elAmountCard = document.getElementById('cutAmountCard');
-      const elPercentCard = document.getElementById('cutPercentCard');
       if (elAmountCard) elAmountCard.textContent = `$${amountCard.toFixed(2)}`;
-      if (elPercentCard) elPercentCard.textContent = `${percentCard}%`;
 
       const elAmountTransfer = document.getElementById('cutAmountTransfer');
-      const elPercentTransfer = document.getElementById('cutPercentTransfer');
       if (elAmountTransfer) elAmountTransfer.textContent = `$${amountTransfer.toFixed(2)}`;
-      if (elPercentTransfer) elPercentTransfer.textContent = `${percentTransfer}%`;
 
       const elAmountMixed = document.getElementById('cutAmountMixed');
-      const elPercentMixed = document.getElementById('cutPercentMixed');
       if (elAmountMixed) elAmountMixed.textContent = `$${amountMixed.toFixed(2)}`;
-      if (elPercentMixed) elPercentMixed.textContent = `${percentMixed}%`;
+
+      // Conteo de operaciones por método
+      const elCountCash = document.getElementById('cutCountCash');
+      if (elCountCash) elCountCash.textContent = live.cash_sales_count || (amountCash > 0 ? '—' : '0');
+      const elCountCard = document.getElementById('cutCountCard');
+      if (elCountCard) elCountCard.textContent = live.card_sales_count || (amountCard > 0 ? '—' : '0');
+      const elCountTransfer = document.getElementById('cutCountTransfer');
+      if (elCountTransfer) elCountTransfer.textContent = live.transfer_sales_count || (amountTransfer > 0 ? '—' : '0');
+      const elCountMixed = document.getElementById('cutCountMixed');
+      if (elCountMixed) elCountMixed.textContent = live.mixed_sales_count || (amountMixed > 0 ? '—' : '0');
 
       // Pie de tabla
       const elFootCount = document.getElementById('cutFootTotalCount');
@@ -232,7 +229,7 @@ function initCutCash() {
         `         TIENDA ABARROTES NEXUS\n` +
         `      COMPROBANTE DE CORTE DE CAJA\n` +
         `========================================\n` +
-        `Caja: ${terminalInfo.name} | Cajero: ${shift.cashier_name || 'Cajero'}\n` +
+        `Caja: ${terminalInfo.name} (${terminalInfo.code})\n` +
         `Fecha: ${formatShortDate(now)} ${formatTime(now)}\n` +
         `Apertura: ${formatShortDate(new Date(shift.opened_at))} ${formatTime(new Date(shift.opened_at))}\n` +
         `----------------------------------------\n` +

@@ -102,8 +102,18 @@ function initSalesHistory() {
 
   function openTicketModal(ticket) {
     if (!ticket) return;
-    if (ticketModalFolio) ticketModalFolio.textContent = 'Ticket de Compra';
-    if (ticketModalDate) ticketModalDate.textContent = '';
+    if (ticketModalFolio) ticketModalFolio.textContent = ticket.folio ? `Ticket ${ticket.folio}` : 'Ticket de Compra';
+    if (ticketModalDate) {
+      if (ticket.created_at) {
+        ticketModalDate.textContent = new Date(ticket.created_at).toLocaleString('es-MX', {
+          timeZone: 'America/Mexico_City',
+          dateStyle: 'medium',
+          timeStyle: 'short'
+        });
+      } else {
+        ticketModalDate.textContent = ticket.date || '';
+      }
+    }
 
     if (ticketReceiptBody) {
       const isCancelled = ticket.status === 'cancelled';
@@ -156,15 +166,33 @@ function initSalesHistory() {
       const paymentNames = {
         cash: 'Efectivo',
         card: 'Tarjeta Bancaria',
+        transfer: 'Transferencia',
+        mixed: 'Pago Mixto',
         qr: 'Pago con QR',
         codi: 'CoDi'
       };
       const payName = paymentNames[ticket.paymentMethod] || 'Efectivo';
       const purchaseTime = ticket.date || `${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} hrs`;
+      const cajaLabel = ticket.cajaName || (ticket.cajaCode === 'C2' ? 'Caja 2' : 'Caja 1');
+
+      let mixedBreakdownHtml = '';
+      if (ticket.paymentMethod === 'mixed') {
+        mixedBreakdownHtml = `
+          <div style="font-size: 11.5px; color: #475569; padding-left: 8px; margin-top: 3px;">
+            ${ticket.cashAmount > 0 ? `<div>• Efectivo: $${parseFloat(ticket.cashAmount).toFixed(2)}</div>` : ''}
+            ${ticket.cardAmount > 0 ? `<div>• Tarjeta: $${parseFloat(ticket.cardAmount).toFixed(2)}</div>` : ''}
+            ${ticket.transferAmount > 0 ? `<div>• Transferencia: $${parseFloat(ticket.transferAmount).toFixed(2)}</div>` : ''}
+          </div>
+        `;
+      }
 
       ticketReceiptBody.innerHTML = `
-        <div class="receipt-time-row">
-          <span class="receipt-time-label">Hora de compra:</span>
+        <div class="receipt-time-row" style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+          <span class="receipt-time-label">Terminal:</span>
+          <strong class="receipt-time-val" style="color: #2563eb;">${cajaLabel}</strong>
+        </div>
+        <div class="receipt-time-row" style="display: flex; justify-content: space-between;">
+          <span class="receipt-time-label">Hora:</span>
           <strong class="receipt-time-val">${purchaseTime}</strong>
         </div>
         <div class="receipt-divider"></div>
@@ -176,6 +204,7 @@ function initSalesHistory() {
           <span>Método de pago:</span>
           <strong>${payName}</strong>
         </div>
+        ${mixedBreakdownHtml}
         <div class="receipt-line receipt-total">
           <span>TOTAL:</span>
           <span>$${parseFloat(ticket.total).toFixed(2)}</span>
