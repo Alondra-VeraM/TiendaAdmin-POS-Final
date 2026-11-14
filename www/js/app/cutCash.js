@@ -193,12 +193,15 @@ function initCutCash() {
       const efecEsp = parseFloat(closed.expected_cash || 0).toFixed(2);
       const efecCont = parseFloat(closed.counted_cash || 0).toFixed(2);
 
-      // Notificar cambio de turno a toda la aplicación
-      if (typeof window.checkShiftState === 'function') {
-        await window.checkShiftState();
+      // Notificar cambio de turno y sincronizar pantallas inmediatamente
+      if (typeof window.syncAllPosScreens === 'function') {
+        await window.syncAllPosScreens();
+      } else {
+        if (typeof window.checkShiftState === 'function') {
+          await window.checkShiftState();
+        }
+        renderCashCut();
       }
-
-      renderCashCut();
 
       showModal(
         'Turno Cerrado con Éxito',

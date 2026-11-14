@@ -969,8 +969,13 @@ function initPos() {
       return;
     }
 
-    await checkShiftState();
-    if (typeof renderCashCut === 'function') renderCashCut();
+    // Sincronizar todas las pantallas tras abrir nuevo turno (inicia con 0 ventas y $0.00)
+    if (typeof window.syncAllPosScreens === 'function') {
+      await window.syncAllPosScreens();
+    } else {
+      await checkShiftState();
+      if (typeof renderCashCut === 'function') renderCashCut();
+    }
 
     showModal(
       'Turno Abierto con Éxito',

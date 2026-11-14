@@ -43,12 +43,12 @@ function initSalesHistory() {
     let totalAccumulatedNum = 0;
     let totalCashNum = 0;
 
-    const summary = window.PosApp && window.PosApp.dailySalesSummary;
-    if (salesHistoryFilter.caja === 'all' && salesHistoryFilter.payment === 'all' && salesHistoryFilter.status === 'all' && !salesHistoryFilter.search && summary && summary.ok) {
-      // Suma exacta del día agarrada directamente de la base de datos
-      totalTicketsNum = summary.total_sales_count || 0;
-      totalAccumulatedNum = parseFloat(summary.total_sales_amount || 0);
-      totalCashNum = parseFloat(summary.cash_total || 0);
+    const activeTotals = window.PosApp && window.PosApp.activeShiftTotals;
+    if (salesHistoryFilter.caja === 'all' && salesHistoryFilter.payment === 'all' && salesHistoryFilter.status === 'all' && !salesHistoryFilter.search && activeTotals) {
+      // Indicadores del turno activo tomados directamente de Supabase
+      totalTicketsNum = activeTotals.total_sales_count || 0;
+      totalAccumulatedNum = parseFloat(activeTotals.total_sales_amount || 0);
+      totalCashNum = parseFloat(activeTotals.cash_sales || 0);
     } else {
       salesHistoryList.forEach(item => {
         if (item.status === 'completed') {

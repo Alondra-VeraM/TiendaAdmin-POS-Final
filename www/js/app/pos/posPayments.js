@@ -278,12 +278,12 @@ function initPosPayments() {
     const folioBadge = document.getElementById('ticketFolio');
     if (folioBadge) folioBadge.textContent = `Folio ${state.folio}`;
 
-    // Refrescar inventario y ventas desde Supabase en segundo plano
-    if (typeof window.refreshInventoryFromSupabase === 'function') {
-      window.refreshInventoryFromSupabase();
-    }
-    if (typeof window.refreshSalesFromSupabase === 'function') {
-      window.refreshSalesFromSupabase();
+    // Sincronización integral inmediata de todas las pantallas con Supabase (ERROR 4)
+    if (typeof window.syncAllPosScreens === 'function') {
+      window.syncAllPosScreens();
+    } else {
+      if (typeof window.refreshInventoryFromSupabase === 'function') window.refreshInventoryFromSupabase();
+      if (typeof window.refreshSalesFromSupabase === 'function') window.refreshSalesFromSupabase();
     }
   }
 

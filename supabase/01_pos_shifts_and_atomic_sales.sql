@@ -48,6 +48,8 @@ DECLARE
     v_card_sales NUMERIC(12,2) := 0.00;
     v_transfer_sales NUMERIC(12,2) := 0.00;
     v_mixed_sales NUMERIC(12,2) := 0.00;
+    v_avg_ticket NUMERIC(12,2) := 0.00;
+    v_sales_list JSONB := '[]'::jsonb;
 BEGIN
     SELECT * INTO v_shift
     FROM public.cash_cuts
@@ -56,7 +58,7 @@ BEGIN
     LIMIT 1;
 
     IF v_shift.id IS NULL THEN
-        -- Retornar último turno cerrado para referencia
+        -- Retornar último turno cerrado para referencia informativa
         SELECT * INTO v_shift
         FROM public.cash_cuts
         WHERE terminal_code = p_terminal_code
@@ -66,11 +68,22 @@ BEGIN
         RETURN jsonb_build_object(
             'is_open', false,
             'terminal_code', p_terminal_code,
-            'last_shift', to_jsonb(v_shift)
+            'last_shift', to_jsonb(v_shift),
+            'live_totals', jsonb_build_object(
+                'total_sales_count', 0,
+                'total_sales_amount', 0.00,
+                'avg_ticket', 0.00,
+                'cash_sales', 0.00,
+                'card_sales', 0.00,
+                'transfer_sales', 0.00,
+                'mixed_sales', 0.00,
+                'expected_cash', COALESCE(v_shift.counted_cash, v_shift.expected_cash, 0.00)
+            ),
+            'sales', '[]'::jsonb
         );
     END IF;
 
-    -- Calcular acumulado en vivo del turno abierto
+    -- Calcular acumulado en vivo del turno abierto EXCLUSIVAMENTE por su cash_cut_id
     SELECT 
         COUNT(*),
         COALESCE(SUM(total_net), 0.00),
@@ -95,7 +108,36 @@ BEGIN
     FROM public.sales
     WHERE terminal_code = p_terminal_code 
       AND status = 'completed'
-      AND (cash_cut_id = v_shift.id OR (cash_cut_id IS NULL AND created_at >= v_shift.opened_at));
+      AND cash_cut_id = v_shift.id;
+
+    IF v_sales_count > 0 THEN
+        v_avg_ticket := ROUND((v_sales_total / v_sales_count), 2);
+    END IF;
+
+    -- Obtener lista de tickets pertenecientes a este turno activo con su detalle
+    SELECT COALESCE(jsonb_agg(to_jsonb(s.*) || jsonb_build_object('items', COALESCE(items_agg.items, '[]'::jsonb))), '[]'::jsonb)
+    INTO v_sales_list
+    FROM (
+        SELECT *
+        FROM public.sales
+        WHERE terminal_code = p_terminal_code
+          AND status = 'completed'
+          AND cash_cut_id = v_shift.id
+        ORDER BY created_at DESC
+    ) s
+    LEFT JOIN LATERAL (
+        SELECT jsonb_agg(jsonb_build_object(
+            'id', si.id,
+            'barcode', si.barcode,
+            'name', si.product_name,
+            'quantity', si.quantity,
+            'unitPrice', si.unit_price,
+            'discount', si.discount,
+            'subtotal', si.subtotal
+        )) AS items
+        FROM public.sale_items si
+        WHERE si.sale_id = s.id
+    ) items_agg ON true;
 
     RETURN jsonb_build_object(
         'is_open', true,
@@ -104,12 +146,14 @@ BEGIN
         'live_totals', jsonb_build_object(
             'total_sales_count', v_sales_count,
             'total_sales_amount', v_sales_total,
+            'avg_ticket', v_avg_ticket,
             'cash_sales', v_cash_sales,
             'card_sales', v_card_sales,
             'transfer_sales', v_transfer_sales,
             'mixed_sales', v_mixed_sales,
             'expected_cash', (v_shift.initial_fund + v_cash_sales + v_shift.cash_inflows - v_shift.cash_outflows - v_shift.supplier_payouts)
-        )
+        ),
+        'sales', v_sales_list
     );
 END;
 $$;

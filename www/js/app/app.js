@@ -195,12 +195,29 @@ function getMexicoDateString(date = new Date()) {
 }
 window.getMexicoDateString = getMexicoDateString;
 
+/**
+ * Consulta las ventas del turno activo para la caja activa desde Supabase (ERROR 1 & ERROR 2)
+ * Garantiza que al abrir un turno nuevo inicie estrictamente con 0 ventas y $0.00
+ */
 async function refreshSalesFromSupabase() {
-  if (dataService && typeof dataService.getDailySalesSummary === 'function') {
-    const summary = await dataService.getDailySalesSummary('all');
-    if (summary && summary.ok) {
-      window.PosApp.dailySalesSummary = summary;
-      const formattedSales = (summary.sales || []).map(s => {
+  const terminalInfo = typeof window.getActiveTerminal === 'function' ? window.getActiveTerminal() : { code: 'C1', name: 'Caja 1' };
+
+  if (dataService && typeof dataService.getTerminalShift === 'function') {
+    const shiftData = await dataService.getTerminalShift(terminalInfo.code);
+    window.currentShift = shiftData;
+
+    if (shiftData && shiftData.is_open) {
+      window.PosApp.activeShiftTotals = shiftData.live_totals || {
+        total_sales_count: 0,
+        total_sales_amount: 0.00,
+        avg_ticket: 0.00,
+        cash_sales: 0.00,
+        card_sales: 0.00,
+        transfer_sales: 0.00,
+        mixed_sales: 0.00
+      };
+
+      const formattedSales = (shiftData.sales || []).map(s => {
         const dt = new Date(s.created_at);
         const pad = (n) => String(n).padStart(2, '0');
         const timeStr = !isNaN(dt.getTime()) ? `${pad(dt.getHours())}:${pad(dt.getMinutes())} hrs` : '--:--';
@@ -213,7 +230,7 @@ async function refreshSalesFromSupabase() {
           folio: s.folio,
           date: timeStr,
           created_at: s.created_at,
-          cajaCode: s.terminal_code || 'C1',
+          cajaCode: s.terminal_code || terminalInfo.code,
           cajaName: s.terminal_name || (s.terminal_code === 'C2' ? 'Caja 2' : 'Caja 1'),
           cashier: s.cashier_name || 'Cajero',
           itemsCount: s.total_pieces || itemsList.length,
@@ -233,49 +250,50 @@ async function refreshSalesFromSupabase() {
           status: s.status || 'completed'
         };
       });
-      window.PosApp.salesHistoryList = formattedSales;
-      if (typeof window.renderSalesHistory === 'function') window.renderSalesHistory();
-      if (typeof window.renderCashCut === 'function') window.renderCashCut();
-      return;
-    }
-  }
 
-  if (dataService && typeof dataService.fetchSales === 'function') {
-    const sales = await dataService.fetchSales();
-    window.PosApp.allSalesHistory = Array.isArray(sales) ? sales : [];
-    const todayMexico = getMexicoDateString();
-    // Filtro estricto: El historial diario muestra ÚNICAMENTE las ventas del día actual en hora local de México
-    window.PosApp.salesHistoryList = window.PosApp.allSalesHistory.filter(s => {
-      if (!s || !s.created_at) return true;
-      const saleDate = getMexicoDateString(new Date(s.created_at));
-      return saleDate === todayMexico;
-    });
+      window.PosApp.salesHistoryList = formattedSales;
+    } else {
+      // Turno cerrado: El historial del turno activo muestra estrictamente 0 ventas
+      window.PosApp.activeShiftTotals = {
+        total_sales_count: 0,
+        total_sales_amount: 0.00,
+        avg_ticket: 0.00,
+        cash_sales: 0.00,
+        card_sales: 0.00,
+        transfer_sales: 0.00,
+        mixed_sales: 0.00
+      };
+      window.PosApp.salesHistoryList = [];
+    }
+
     if (typeof window.renderSalesHistory === 'function') window.renderSalesHistory();
     if (typeof window.renderCashCut === 'function') window.renderCashCut();
   }
 }
 window.refreshSalesFromSupabase = refreshSalesFromSupabase;
 
+/**
+ * Sincronización integral inmediata de todas las pantallas tras cada venta (ERROR 4)
+ */
+async function syncAllPosScreens() {
+  await Promise.all([
+    refreshInventoryFromSupabase(),
+    refreshSalesFromSupabase(),
+    (typeof window.checkShiftState === 'function' ? window.checkShiftState() : Promise.resolve())
+  ]);
+  if (typeof window.renderInventory === 'function') window.renderInventory();
+  if (typeof window.renderSalesHistory === 'function') window.renderSalesHistory();
+  if (typeof window.renderCashCut === 'function') window.renderCashCut();
+}
+window.syncAllPosScreens = syncAllPosScreens;
+
 // Carga inicial directa desde Supabase
 refreshInventoryFromSupabase();
 refreshSalesFromSupabase();
 
 // Escuchar sincronización en tiempo real desde Supabase
-window.addEventListener('supabase:data-synced', (e) => {
-  if (e.detail && Array.isArray(e.detail.products) && e.detail.products.length > 0) {
-    window.PosApp.inventoryList = e.detail.products;
-    if (typeof window.renderInventory === 'function') window.renderInventory();
-  }
-  if (e.detail && Array.isArray(e.detail.sales)) {
-    window.PosApp.allSalesHistory = e.detail.sales;
-    const todayMexico = getMexicoDateString();
-    window.PosApp.salesHistoryList = e.detail.sales.filter(s => {
-      if (!s || !s.created_at) return true;
-      return getMexicoDateString(new Date(s.created_at)) === todayMexico;
-    });
-    if (typeof window.renderSalesHistory === 'function') window.renderSalesHistory();
-    if (typeof window.renderCashCut === 'function') window.renderCashCut();
-  }
+window.addEventListener('supabase:data-synced', () => {
+  syncAllPosScreens();
 });
 
 // Reloj en tiempo real
