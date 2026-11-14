@@ -36,6 +36,20 @@ window.setActiveTerminal = function(code) {
   return window.getActiveTerminal();
 };
 
+// Generador de folio único y cronológico por terminal (evita colisiones y falsos positivos de idempotencia)
+window.generateUniqueFolio = function(terminalCode = 'C1') {
+  const code = (terminalCode === 'C2') ? 'C2' : 'C1';
+  const now = new Date();
+  const y = now.getFullYear().toString().slice(2);
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  const h = String(now.getHours()).padStart(2, '0');
+  const mi = String(now.getMinutes()).padStart(2, '0');
+  const s = String(now.getSeconds()).padStart(2, '0');
+  const rand = Math.floor(100 + Math.random() * 900);
+  return `#TK-${code}-${y}${m}${d}${h}${mi}${s}-${rand}`;
+};
+
 // Función para obtener la configuración activa
 window.getAppConfig = function() {
   const terminal = window.getActiveTerminal();

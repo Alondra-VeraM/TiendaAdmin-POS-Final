@@ -278,20 +278,35 @@ const PosDataService = {
 
     try {
       const terminalInfo = typeof window.getActiveTerminal === 'function' ? window.getActiveTerminal() : { code: 'C1', name: 'Caja 1' };
-      const terminalCode = salePayload.terminal_code || terminalInfo.code;
-      const terminalName = salePayload.terminal_name || terminalInfo.name;
+      const terminalCode = salePayload.terminal_code || terminalInfo.code || 'C1';
+      const terminalName = salePayload.terminal_name || terminalInfo.name || 'Caja 1';
 
-      const formattedItems = items.map(it => ({
-        id: it.id,
-        barcode: it.barcode || it.sku,
-        sku: it.sku || it.barcode,
-        name: it.name,
-        unitPrice: parseFloat(it.unitPrice || it.price || 0),
-        quantity: parseInt(it.quantity, 10) || 1,
-        discount: parseFloat(it.discount || 0),
-        subtotal: parseFloat(it.subtotal || ((it.unitPrice || it.price || 0) * (it.quantity || 1))),
-        promo_applied: it.promoRule ? JSON.stringify(it.promoRule) : null
-      }));
+      // Sanitizar ítems para asegurar que sólo IDs reales de la BD se envíen como numéricos (evitar timestamps o colisiones)
+      const formattedItems = items.map(it => {
+        let validDbId = null;
+        if (typeof it.id === 'number' && Number.isInteger(it.id) && it.id > 0 && it.id < 1000000000) {
+          validDbId = it.id;
+        } else if (typeof it.id === 'string' && /^\d+$/.test(it.id)) {
+          const parsed = parseInt(it.id, 10);
+          if (parsed > 0 && parsed < 1000000000) validDbId = parsed;
+        }
+
+        const cleanBarcode = (it.barcode || it.sku || '').toString().trim();
+        const cleanSku = (it.sku || it.barcode || '').toString().trim();
+        const cleanName = (it.name || it.displayName || 'Artículo').toString().trim();
+
+        return {
+          id: validDbId,
+          barcode: cleanBarcode,
+          sku: cleanSku,
+          name: cleanName,
+          unitPrice: parseFloat(it.unitPrice || it.price || 0),
+          quantity: parseInt(it.quantity, 10) || 1,
+          discount: parseFloat(it.discount || 0),
+          subtotal: parseFloat(it.subtotal || ((it.unitPrice || it.price || 0) * (it.quantity || 1))),
+          promo_applied: it.promoRule ? JSON.stringify(it.promoRule) : null
+        };
+      });
 
       const { data, error } = await client.rpc('register_sale_atomic', {
         p_folio: salePayload.folio,
@@ -311,15 +326,27 @@ const PosDataService = {
       });
 
       if (error) {
-        return { success: false, error: error.message };
+        console.error('[Supabase RPC register_sale_atomic Error]:', error);
+        return { success: false, error: error.message || 'Error de base de datos al registrar venta' };
       }
 
       if (data && data.ok) {
+        if (data.duplicate) {
+          console.warn('[POS] Folio duplicado prevenido por RPC:', data);
+          return {
+            success: false,
+            duplicate: true,
+            error: 'El folio "' + salePayload.folio + '" ya fue registrado previamente en la base de datos.',
+            errorCode: 'DUPLICATE_FOLIO'
+          };
+        }
+
         // Refrescar inventario localmente tras la venta exitosa
         await this.fetchProducts();
-        return { success: true, result: data, duplicate: data.duplicate || false };
+        return { success: true, result: data, duplicate: false };
       }
 
+      console.warn('[Supabase RPC register_sale_atomic Failed]:', data);
       return {
         success: false,
         error: data?.error || 'No se pudo completar la venta',

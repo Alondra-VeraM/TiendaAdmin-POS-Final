@@ -166,9 +166,13 @@ function initPosPayments() {
       transferAmount = mixedTransfer;
     }
 
-    // Generar identificador único (idempotency folio)
+    // Generar folio único garantizado cronológicamente por terminal para evitar colisiones
     const cashierName = (window.currentSessionUser && window.currentSessionUser.name) || 'Elena R.';
-    const nextFolioStr = state.folio || `#TK-${terminalInfo.code}-${Date.now().toString().slice(-6)}`;
+    const nextFolioStr = (typeof window.generateUniqueFolio === 'function')
+      ? window.generateUniqueFolio(terminalInfo.code)
+      : `#TK-${terminalInfo.code}-${Date.now()}`;
+
+    state.folio = nextFolioStr;
 
     const salePayload = {
       folio: nextFolioStr,
@@ -197,7 +201,13 @@ function initPosPayments() {
     }
 
     // 3. REGISTRAR VENTA ATÓMICAMENTE EN SUPABASE
-    const res = await window.PosDataService.registerSale(salePayload, state.cart);
+    let res = null;
+    try {
+      res = await window.PosDataService.registerSale(salePayload, state.cart);
+    } catch (checkoutErr) {
+      console.error('[CHECKOUT NETWORK ERROR]', checkoutErr);
+      res = { success: false, error: 'Error de red o comunicación: ' + checkoutErr.message };
+    }
 
     isCheckoutInProgress = false;
     if (btnCheckout) {
@@ -206,21 +216,28 @@ function initPosPayments() {
       if (checkoutText) checkoutText.textContent = `Cobrar $${totals.totalNet.toFixed(2)}`;
     }
 
-    if (!res || !res.success) {
-      // Manejo claro de errores de persistencia o stock
+    // VERIFICACIÓN ESTRICTA: No simular éxito ni mostrar ticket si Supabase no confirmó la inserción real
+    if (!res || res.success !== true || !res.result || res.result.ok !== true || res.duplicate === true) {
+      console.error('[ERROR EN FLUJO DE COBRO - VENTA RECHAZADA POR SUPABASE]:', res);
+
+      // El carrito se mantiene intacto; NO se muestra ticket
+      let errMsg = res?.error || res?.result?.error || 'No se pudo guardar la venta en Supabase. Compruebe la conexión.';
       if (res?.errorCode === 'SHIFT_CLOSED') {
-        showModal('Venta Bloqueada: Caja Cerrada', res.error || 'La caja está cerrada. Abra un nuevo turno.');
+        showModal('Venta Bloqueada: Caja Cerrada', errMsg + '\n\nDebe realizar la apertura de caja para vender.');
         if (typeof window.checkShiftState === 'function') window.checkShiftState();
       } else if (res?.errorCode === 'INSUFFICIENT_STOCK') {
-        showModal('Inventario Insuficiente', `${res.error}\n\nOtro dispositivo o venta actualizó las existencias. El inventario ha sido actualizado.`);
+        showModal('Inventario Insuficiente', `${errMsg}\n\nEl inventario ha sido actualizado desde el servidor.`);
         if (typeof window.refreshInventoryFromSupabase === 'function') window.refreshInventoryFromSupabase();
+      } else if (res?.errorCode === 'DUPLICATE_FOLIO' || res?.duplicate === true) {
+        showModal('Folio Duplicado', 'El identificador de venta ya existía. Se ha generado un nuevo folio para reintentar.');
+        state.folio = (typeof window.generateUniqueFolio === 'function') ? window.generateUniqueFolio(terminalInfo.code) : `#TK-${terminalInfo.code}-${Date.now()}`;
       } else {
-        showModal('Error al Guardar Venta', res?.error || 'No se pudo guardar la venta en Supabase. Compruebe la conexión.');
+        showModal('Error al Guardar Venta en Supabase', errMsg + '\n\nLos productos permanecen en el carrito para que pueda reintentar.');
       }
       return;
     }
 
-    // 4. VENTA EXITOSA: Registrar en historial local y refrescar vistas
+    // 4. VENTA EXITOSA CONFIRMADA POR SUPABASE: Registrar en historial local y refrescar vistas
     const now = new Date();
     const pad = (n) => String(n).padStart(2, '0');
     const timeStr = `${pad(now.getHours())}:${pad(now.getMinutes())} hrs`;
@@ -233,7 +250,7 @@ function initPosPayments() {
     }));
 
     const newHistoryEntry = {
-      id: res.result?.sale_id || Date.now(),
+      id: res.result.sale_id,
       folio: nextFolioStr,
       date: timeStr,
       created_at: now.toISOString(),
@@ -263,7 +280,7 @@ function initPosPayments() {
     if (typeof renderSalesHistory === 'function') renderSalesHistory();
     if (typeof renderCashCut === 'function') renderCashCut();
 
-    // Mostrar comprobante / ticket
+    // Mostrar comprobante / ticket ÚNICAMENTE tras confirmación de Supabase
     if (typeof openTicketModal === 'function') {
       openTicketModal(newHistoryEntry);
     }
@@ -272,18 +289,17 @@ function initPosPayments() {
     state.cart = [];
     if (typeof renderCart === 'function') renderCart();
 
-    // Generar siguiente folio
-    const nextNum = (parseInt(nextFolioStr.replace(/[^0-9]/g, '')) || 44940) + 1;
-    state.folio = `#TK-${terminalInfo.code}-${nextNum}`;
-    const folioBadge = document.getElementById('ticketFolio');
-    if (folioBadge) folioBadge.textContent = `Folio ${state.folio}`;
+    // Generar nuevo folio fresco para la siguiente venta
+    state.folio = (typeof window.generateUniqueFolio === 'function')
+      ? window.generateUniqueFolio(terminalInfo.code)
+      : `#TK-${terminalInfo.code}-${Date.now()}`;
 
     // Sincronización integral inmediata de todas las pantallas con Supabase (ERROR 4)
     if (typeof window.syncAllPosScreens === 'function') {
-      window.syncAllPosScreens();
+      await window.syncAllPosScreens();
     } else {
-      if (typeof window.refreshInventoryFromSupabase === 'function') window.refreshInventoryFromSupabase();
-      if (typeof window.refreshSalesFromSupabase === 'function') window.refreshSalesFromSupabase();
+      if (typeof window.refreshInventoryFromSupabase === 'function') await window.refreshInventoryFromSupabase();
+      if (typeof window.refreshSalesFromSupabase === 'function') await window.refreshSalesFromSupabase();
     }
   }
 

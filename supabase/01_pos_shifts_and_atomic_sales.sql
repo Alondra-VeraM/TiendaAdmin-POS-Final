@@ -430,14 +430,32 @@ BEGIN
         v_total_pieces := v_total_pieces + v_item_qty;
         v_total_items := v_total_items + 1;
 
-        -- Intentar resolver product_id
-        IF v_item.value ? 'id' AND (v_item.value->>'id') ~ '^[0-9]+$' THEN
+        -- Intentar resolver product_id con prioridad robusta (ID válido < 1,000,000,000, barcode, sku, nombre)
+        v_item_prod_id := NULL;
+        IF v_item.value ? 'id' AND (v_item.value->>'id') ~ '^[0-9]+$' AND (v_item.value->>'id')::BIGINT < 1000000000 THEN
             v_item_prod_id := (v_item.value->>'id')::BIGINT;
-        ELSE
+        END IF;
+
+        IF v_item_prod_id IS NULL AND (v_item.value ? 'barcode') AND (v_item.value->>'barcode') <> '' THEN
             SELECT id INTO v_item_prod_id 
             FROM public.products 
             WHERE barcode = (v_item.value->>'barcode') 
                OR sku = (v_item.value->>'barcode')
+            LIMIT 1;
+        END IF;
+
+        IF v_item_prod_id IS NULL AND (v_item.value ? 'sku') AND (v_item.value->>'sku') <> '' THEN
+            SELECT id INTO v_item_prod_id 
+            FROM public.products 
+            WHERE barcode = (v_item.value->>'sku') 
+               OR sku = (v_item.value->>'sku')
+            LIMIT 1;
+        END IF;
+
+        IF v_item_prod_id IS NULL AND (v_item.value ? 'name') AND (v_item.value->>'name') <> '' THEN
+            SELECT id INTO v_item_prod_id 
+            FROM public.products 
+            WHERE lower(trim(name)) = lower(trim(v_item.value->>'name'))
             LIMIT 1;
         END IF;
 
@@ -511,13 +529,30 @@ BEGIN
         v_item_subtotal := COALESCE((v_item.value->>'subtotal')::NUMERIC, (v_item_price * v_item_qty) - v_item_discount);
 
         v_item_prod_id := NULL;
-        IF v_item.value ? 'id' AND (v_item.value->>'id') ~ '^[0-9]+$' THEN
+        IF v_item.value ? 'id' AND (v_item.value->>'id') ~ '^[0-9]+$' AND (v_item.value->>'id')::BIGINT < 1000000000 THEN
             v_item_prod_id := (v_item.value->>'id')::BIGINT;
-        ELSE
+        END IF;
+
+        IF v_item_prod_id IS NULL AND (v_item.value ? 'barcode') AND (v_item.value->>'barcode') <> '' THEN
             SELECT id INTO v_item_prod_id 
             FROM public.products 
             WHERE barcode = (v_item.value->>'barcode') 
                OR sku = (v_item.value->>'barcode')
+            LIMIT 1;
+        END IF;
+
+        IF v_item_prod_id IS NULL AND (v_item.value ? 'sku') AND (v_item.value->>'sku') <> '' THEN
+            SELECT id INTO v_item_prod_id 
+            FROM public.products 
+            WHERE barcode = (v_item.value->>'sku') 
+               OR sku = (v_item.value->>'sku')
+            LIMIT 1;
+        END IF;
+
+        IF v_item_prod_id IS NULL AND (v_item.value ? 'name') AND (v_item.value->>'name') <> '' THEN
+            SELECT id INTO v_item_prod_id 
+            FROM public.products 
+            WHERE lower(trim(name)) = lower(trim(v_item.value->>'name'))
             LIMIT 1;
         END IF;
 

@@ -5,7 +5,9 @@
 
 // Estado del POS compartido
 const state = {
-  folio: '#44939',
+  folio: (typeof window.generateUniqueFolio === 'function') 
+    ? window.generateUniqueFolio(window.getActiveTerminal?.().code || 'C1') 
+    : `#TK-C1-${Date.now().toString().slice(-6)}`,
   selectedPaymentMethod: 'cash',
   currentView: window.currentActiveView || 'pos',
   cart: [],
@@ -661,7 +663,8 @@ function initPos() {
     } catch (e) {}
 
     state.cart = [];
-    state.folio = 'TK-' + String(Math.floor(Math.random() * 90000) + 10000);
+    const termCode = (typeof window.getActiveTerminal === 'function') ? window.getActiveTerminal().code : 'C1';
+    state.folio = (typeof window.generateUniqueFolio === 'function') ? window.generateUniqueFolio(termCode) : `#TK-${termCode}-${Date.now().toString().slice(-6)}`;
     state.ticketNote = '';
     renderCart();
     updateSuspendedBadge();
