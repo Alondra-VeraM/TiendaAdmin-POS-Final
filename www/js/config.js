@@ -4,16 +4,33 @@
  */
 
 window.ENV_CONFIG = {
-  // URL base del proyecto Supabase
-  SUPABASE_URL: 'https://qluxojdodesadfthugml.supabase.co',
+  // URL base del proyecto Supabase (se inyecta desde el backend /api/config o localStorage)
+  SUPABASE_URL: (typeof localStorage !== 'undefined' && localStorage.getItem('POS_SUPABASE_URL')) || '',
 
-  // Clave pública anónima del proyecto Supabase
-  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFsdXhvamRvZGVzYWRmdGh1Z21sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxODM5NTUsImV4cCI6MjEwNzc1OTk1NX0.t5etK56r6Z2qsHPtjni7wnN1AmUSDEfQXG_4Roum2u0',
+  // Clave pública del proyecto Supabase (se inyecta desde el backend /api/config o localStorage)
+  SUPABASE_ANON_KEY: (typeof localStorage !== 'undefined' && localStorage.getItem('POS_SUPABASE_ANON_KEY')) || '',
 
   // Configuración de la tienda
   STORE_NAME: 'TIENDA ABARROTES NEXUS',
   DEFAULT_ADMIN_PIN: '1234'
 };
+
+// Cargar configuración desde el servidor local (/api/config lee de .env sin exponer claves en el repositorio)
+if (typeof window !== 'undefined' && typeof fetch === 'function') {
+  fetch('/api/config')
+    .then(r => r.ok ? r.json() : null)
+    .then(cfg => {
+      if (cfg && cfg.supabaseUrl && cfg.supabaseAnonKey) {
+        window.ENV_CONFIG.SUPABASE_URL = cfg.supabaseUrl;
+        window.ENV_CONFIG.SUPABASE_ANON_KEY = cfg.supabaseAnonKey;
+        try {
+          localStorage.setItem('POS_SUPABASE_URL', cfg.supabaseUrl);
+          localStorage.setItem('POS_SUPABASE_ANON_KEY', cfg.supabaseAnonKey);
+        } catch (e) {}
+      }
+    })
+    .catch(() => {});
+}
 
 // Obtener terminal activa de forma persistente (C1 o C2)
 window.getActiveTerminal = function() {

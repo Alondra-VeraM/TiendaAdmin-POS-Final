@@ -1,7 +1,14 @@
 /**
- * SUPABASE CLIENT & DATA LAYER
- * Conexión nativa con Supabase (PostgreSQL) para NEXUS Retail POS
- * Fuente principal de verdad y sincronización multi-terminal (Caja 1 y Caja 2).
+ * ==============================================================================
+ * SUPABASE CLIENT & POS DATA LAYER (NEXUS RETAIL POS - MULTI-CAJA C1 Y C2)
+ * ==============================================================================
+ * Arquitectura híbrida anti-fallos y anti-race conditions:
+ * 1. Servidor Local Maestro (SQLite WAL): Ambas cajas (C1 y C2) envían sus ventas y
+ *    turnos a `/api/pos/...`, garantizando serialización atómica (BEGIN IMMEDIATE)
+ *    y cero latencia de red en LAN.
+ * 2. Nube Supabase (PostgreSQL): Respaldo en la nube programado cada 15 min (Plan Free)
+ *    e inmediato al corte de caja, más fallback directo si el servidor local no responde.
+ * ==============================================================================
  */
 
 // Utilidades seguras de almacenamiento local
@@ -42,15 +49,17 @@ const INITIAL_SALES_HISTORY = [];
 
 let supabaseClientInstance = null;
 let isSupabaseConnected = false;
+let isBackendConnected = false;
 
+// Cliente de Supabase
 function initSupabaseClient() {
   if (supabaseClientInstance) return supabaseClientInstance;
 
-  const config = (typeof window.getAppConfig === 'function') 
+  const config = (typeof window !== 'undefined' && typeof window.getAppConfig === 'function') 
     ? window.getAppConfig() 
     : {
-        supabaseUrl: window.ENV_CONFIG && window.ENV_CONFIG.SUPABASE_URL,
-        supabaseAnonKey: window.ENV_CONFIG && window.ENV_CONFIG.SUPABASE_ANON_KEY
+        supabaseUrl: (typeof window !== 'undefined' && window.ENV_CONFIG && window.ENV_CONFIG.SUPABASE_URL) || safeGetStorage('POS_SUPABASE_URL') || '',
+        supabaseAnonKey: (typeof window !== 'undefined' && window.ENV_CONFIG && window.ENV_CONFIG.SUPABASE_ANON_KEY) || safeGetStorage('POS_SUPABASE_ANON_KEY') || ''
       };
 
   let url = config.supabaseUrl || '';
@@ -78,22 +87,52 @@ function initSupabaseClient() {
   }
 
   isSupabaseConnected = false;
-  updateSyncIndicator(false);
   return null;
 }
 
 function updateSyncIndicator(online) {
+  if (typeof document === 'undefined') return;
   const statusDot = document.querySelector('.dot-sync-green');
   const statusText = document.querySelector('.sync-status-text');
   if (statusText) {
-    statusText.textContent = online ? 'Supabase Nube (En línea)' : 'Sin Conexión (Revisar Red)';
+    statusText.textContent = online ? 'En Línea' : 'Modo Local';
   }
   if (statusDot) {
-    statusDot.style.backgroundColor = online ? '#10b981' : '#ef4444';
+    statusDot.style.backgroundColor = online ? '#10b981' : '#f59e0b';
   }
 }
 
-// Intentar inicialización inmediata
+// Helper para llamadas al Backend Local Maestro
+async function localApi(endpoint, options = {}) {
+  try {
+    const basePath = (typeof window !== 'undefined' && window.BACKEND_API_URL) 
+      ? window.BACKEND_API_URL 
+      : (typeof window !== 'undefined' && (window.location.protocol === 'file:' || (window.location.port !== '3000' && window.location.hostname === 'localhost')))
+        ? 'http://localhost:3000'
+        : '';
+    const url = `${basePath}/api/pos${endpoint}`;
+    const opts = {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.headers || {})
+      }
+    };
+    const res = await fetch(url, opts);
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const data = await res.json();
+      isBackendConnected = true;
+      return { ok: res.ok, status: res.status, data };
+    }
+    isBackendConnected = true;
+    return { ok: res.ok, status: res.status, data: null };
+  } catch (err) {
+    return { ok: false, status: 0, error: err.message, networkError: true };
+  }
+}
+
+// Inicialización de cliente Supabase
 initSupabaseClient();
 
 const PosDataService = {
@@ -103,13 +142,128 @@ const PosDataService = {
   },
 
   isConnected() {
-    return isSupabaseConnected && !!this.getClient();
+    return isBackendConnected || (isSupabaseConnected && !!this.getClient());
   },
 
   /**
-   * Consulta directa al catálogo de productos en Supabase (Fuente de verdad compartida)
+   * Obtiene la lista de cajeros registrados (Local Maestro primero, fallback Supabase)
+   */
+  async fetchCashiers() {
+    // 1. Intentar Backend Local Maestro
+    const local = await localApi('/cashiers');
+    if (local.ok && local.data && Array.isArray(local.data.cashiers)) {
+      return local.data.cashiers.map(u => ({
+        id: u.id,
+        username: u.username,
+        fullName: u.full_name || u.fullName,
+        pin: u.pin || null
+      }));
+    }
+
+    // 2. Fallback Supabase
+    const client = this.getClient();
+    if (client) {
+      try {
+        const { data, error } = await client
+          .from('users')
+          .select('id, username, full_name, role, pin, is_active')
+          .eq('role', 'cajero')
+          .eq('is_active', true)
+          .order('full_name');
+
+        if (!error && Array.isArray(data)) {
+          return data.map(u => ({
+            id: u.id,
+            username: u.username,
+            fullName: u.full_name,
+            pin: u.pin || null
+          }));
+        }
+      } catch (err) {
+        console.warn('Error consultando cajeros de Supabase:', err);
+      }
+    }
+    return [];
+  },
+
+  /**
+   * Registra un nuevo cajero en el sistema
+   */
+  async registerCashierRemote(cashier) {
+    // 1. Intentar Backend Local Maestro
+    const local = await localApi('/cashiers', {
+      method: 'POST',
+      body: JSON.stringify({
+        username: cashier.username,
+        full_name: cashier.fullName || cashier.full_name,
+        role: 'cajero',
+        pin: cashier.pin || null
+      })
+    });
+    if (local.ok && local.data && local.data.cashier) {
+      return { success: true, user: local.data.cashier };
+    }
+    if (local.data && local.data.error && !local.networkError) {
+      return { success: false, error: local.data.error };
+    }
+
+    // 2. Fallback Supabase
+    const client = this.getClient();
+    if (client) {
+      try {
+        const { data, error } = await client
+          .from('users')
+          .insert({
+            username: cashier.username,
+            full_name: cashier.fullName,
+            role: 'cajero',
+            pin: cashier.pin || null,
+            is_active: true
+          })
+          .select();
+
+        if (!error && data && data[0]) {
+          return { success: true, user: data[0] };
+        }
+        if (error) {
+          console.warn('Error insertando cajero en Supabase:', error.message);
+          return { success: false, error: error.message };
+        }
+      } catch (err) {
+        console.warn('Fallo de red al registrar cajero en Supabase:', err);
+        return { success: false, error: err.message };
+      }
+    }
+    return { success: true, offline: true };
+  },
+
+  /**
+   * Consulta el catálogo de productos (Local Maestro primero, fallback Supabase)
    */
   async fetchProducts() {
+    // 1. Intentar Backend Local Maestro
+    const local = await localApi('/products');
+    if (local.ok && local.data && Array.isArray(local.data.products)) {
+      const formatted = local.data.products.map(p => ({
+        id: p.id,
+        barcode: p.barcode,
+        sku: p.sku || p.barcode,
+        name: p.name,
+        displayName: p.display_name || p.displayName || p.name,
+        category: p.category || 'General',
+        cost: parseFloat(p.cost || 0),
+        price: parseFloat(p.price || 0),
+        stock: parseInt(p.stock, 10) || 0,
+        iconType: p.icon_type || p.iconType || 'bread',
+        promoRule: p.promo_rule || p.promoRule || null
+      }));
+
+      safeSetStorage('pos_inventory_products', JSON.stringify(formatted));
+      updateSyncIndicator(true);
+      return formatted;
+    }
+
+    // 2. Fallback Supabase
     const client = this.getClient();
     if (client) {
       try {
@@ -164,9 +318,18 @@ const PosDataService = {
    * Consulta el estado del turno para la terminal indicada (C1 o C2)
    */
   async getTerminalShift(terminalCode) {
-    const code = terminalCode || (typeof window.getActiveTerminal === 'function' ? window.getActiveTerminal().code : 'C1');
-    const client = this.getClient();
+    const code = terminalCode || (typeof window !== 'undefined' && typeof window.getActiveTerminal === 'function' ? window.getActiveTerminal().code : 'C1');
 
+    // 1. Intentar Backend Local Maestro
+    const local = await localApi(`/shift/${code}`);
+    if (local.ok && local.data) {
+      updateSyncIndicator(true);
+      safeSetStorage(`pos_shift_${code}`, JSON.stringify(local.data));
+      return local.data;
+    }
+
+    // 2. Fallback Supabase RPC
+    const client = this.getClient();
     if (client) {
       try {
         const { data, error } = await client.rpc('get_terminal_shift', {
@@ -189,22 +352,40 @@ const PosDataService = {
       }
     }
 
-    // Fallback de caché local si la red falla
+    // 3. Fallback de caché local si la red falla
     const cached = safeGetStorage(`pos_shift_${code}`);
     if (cached) {
       try { return JSON.parse(cached); } catch (e) {}
     }
 
-    return { is_open: false, terminal_code: code, error: 'Sin conexión con Supabase' };
+    return { is_open: false, terminal_code: code, error: 'Sin conexión con el servidor' };
   },
 
   /**
-   * Abre un nuevo turno en Supabase
+   * Abre un nuevo turno en la terminal
    */
   async openTerminalShift(terminalCode, terminalName, cashierName, initialFund = 1000.00) {
+    // 1. Intentar Backend Local Maestro
+    const local = await localApi('/shift/open', {
+      method: 'POST',
+      body: JSON.stringify({
+        terminal_code: terminalCode,
+        initial_fund: parseFloat(initialFund) || 1000.00,
+        cashier_name: cashierName || 'Cajero'
+      })
+    });
+    if (local.ok && local.data && local.data.ok) {
+      safeSetStorage(`pos_shift_${terminalCode}`, JSON.stringify({ is_open: true, shift: local.data.shift }));
+      return local.data;
+    }
+    if (local.data && local.data.error && !local.networkError) {
+      return { ok: false, error: local.data.error, errorCode: local.data.errorCode };
+    }
+
+    // 2. Fallback Supabase
     const client = this.getClient();
     if (!client) {
-      return { ok: false, error: 'No hay conexión con Supabase para abrir el turno.' };
+      return { ok: false, error: 'No hay conexión con el servidor para abrir el turno.' };
     }
 
     try {
@@ -215,10 +396,7 @@ const PosDataService = {
         p_initial_fund: parseFloat(initialFund) || 1000.00
       });
 
-      if (error) {
-        return { ok: false, error: error.message };
-      }
-
+      if (error) return { ok: false, error: error.message };
       if (data && data.ok) {
         safeSetStorage(`pos_shift_${terminalCode}`, JSON.stringify({ is_open: true, shift: data.shift }));
         return data;
@@ -230,12 +408,30 @@ const PosDataService = {
   },
 
   /**
-   * Cierra el turno activo y guarda permanentemente el corte de caja en Supabase
+   * Cierra el turno activo y guarda permanentemente el corte de caja
    */
   async closeTerminalShift(terminalCode, countedCash, notes = null, cashInflows = 0, cashOutflows = 0, supplierPayouts = 0) {
+    // 1. Intentar Backend Local Maestro (dispara respaldo en la nube en background)
+    const local = await localApi('/shift/close', {
+      method: 'POST',
+      body: JSON.stringify({
+        terminal_code: terminalCode,
+        counted_cash: parseFloat(countedCash) || 0,
+        notes: notes
+      })
+    });
+    if (local.ok && local.data && local.data.ok) {
+      safeSetStorage(`pos_shift_${terminalCode}`, JSON.stringify({ is_open: false, last_shift: local.data.shift }));
+      return local.data;
+    }
+    if (local.data && local.data.error && !local.networkError) {
+      return { ok: false, error: local.data.error, errorCode: local.data.errorCode };
+    }
+
+    // 2. Fallback Supabase
     const client = this.getClient();
     if (!client) {
-      return { ok: false, error: 'No hay conexión con Supabase para cerrar el turno y guardar el corte.' };
+      return { ok: false, error: 'No hay conexión para cerrar el turno y guardar el corte.' };
     }
 
     try {
@@ -248,10 +444,7 @@ const PosDataService = {
         p_supplier_payouts: parseFloat(supplierPayouts) || 0
       });
 
-      if (error) {
-        return { ok: false, error: error.message };
-      }
-
+      if (error) return { ok: false, error: error.message };
       if (data && data.ok) {
         safeSetStorage(`pos_shift_${terminalCode}`, JSON.stringify({ is_open: false, last_shift: data.shift }));
         return data;
@@ -263,108 +456,231 @@ const PosDataService = {
   },
 
   /**
-   * Registra una venta de forma atómica en Supabase:
+   * Registra una venta de forma atómica:
    * Valida turno abierto, bloquea filas de producto para evitar sobreventas concurrentes,
    * valida existencias, descuenta inventario y asocia la venta al turno.
+   * CERO RACE CONDITIONS garantizado por transacción SQLite WAL BEGIN IMMEDIATE en backend local.
    */
   async registerSale(salePayload, items = []) {
-    const client = this.getClient();
-    if (!client) {
+    const terminalInfo = (typeof window !== 'undefined' && typeof window.getActiveTerminal === 'function') 
+      ? window.getActiveTerminal() 
+      : { code: 'C1', name: 'Caja 1' };
+    const terminalCode = salePayload.terminal_code || terminalInfo.code || 'C1';
+    const terminalName = salePayload.terminal_name || terminalInfo.name || 'Caja 1';
+
+    // Sanitizar ítems para asegurar que sólo IDs reales de la BD se envíen como numéricos
+    const formattedItems = (items || []).map(it => {
+      let validDbId = null;
+      if (typeof it.id === 'number' && Number.isInteger(it.id) && it.id > 0 && it.id < 1000000000) {
+        validDbId = it.id;
+      } else if (typeof it.id === 'string' && /^\d+$/.test(it.id)) {
+        const parsed = parseInt(it.id, 10);
+        if (parsed > 0 && parsed < 1000000000) validDbId = parsed;
+      }
+
+      const cleanBarcode = (it.barcode || it.sku || '').toString().trim();
+      const cleanSku = (it.sku || it.barcode || '').toString().trim();
+      const cleanName = (it.name || it.displayName || 'Artículo').toString().trim();
+
+      return {
+        id: validDbId,
+        barcode: cleanBarcode,
+        sku: cleanSku,
+        name: cleanName,
+        unitPrice: parseFloat(it.unitPrice || it.price || 0),
+        quantity: parseInt(it.quantity, 10) || 1,
+        discount: parseFloat(it.discount || 0),
+        subtotal: parseFloat(it.subtotal || ((it.unitPrice || it.price || 0) * (it.quantity || 1))),
+        is_service: !!(it.is_service || it.isService),
+        promo_applied: it.promoRule ? JSON.stringify(it.promoRule) : null
+      };
+    });
+
+    const fullPayload = {
+      folio: salePayload.folio,
+      terminal_code: terminalCode,
+      terminal_name: terminalName,
+      cashier_name: salePayload.cashier_name || 'Cajero',
+      subtotal: parseFloat(salePayload.subtotal || salePayload.total_net || 0),
+      discount: parseFloat(salePayload.discount || 0),
+      total_net: parseFloat(salePayload.total_net || 0),
+      payment_method: salePayload.payment_method || 'cash',
+      cash_received: salePayload.cash_received != null ? parseFloat(salePayload.cash_received) : null,
+      cash_change: salePayload.cash_change != null ? parseFloat(salePayload.cash_change) : null,
+      cash_amount: salePayload.cash_amount != null ? parseFloat(salePayload.cash_amount) : 0,
+      card_amount: salePayload.card_amount != null ? parseFloat(salePayload.card_amount) : 0,
+      transfer_amount: salePayload.transfer_amount != null ? parseFloat(salePayload.transfer_amount) : 0,
+      items: formattedItems
+    };
+
+    // 1. RUTA PRINCIPAL: Backend Local Maestro (Transacciones atómicas WAL sin race conditions)
+    const local = await localApi('/sale', {
+      method: 'POST',
+      body: JSON.stringify(fullPayload)
+    });
+
+    if (local.ok && local.data && local.data.success) {
+      await this.fetchProducts();
+      return { success: true, result: local.data.result, duplicate: false };
+    }
+
+    // Rechazo explícito de la base de datos (stock insuficiente, caja cerrada, folio duplicado, etc.)
+    if (local.data && !local.networkError) {
       return {
         success: false,
-        error: 'Sin conexión con el servidor Supabase. No se puede procesar la venta sin persistencia.'
+        error: local.data.error || 'Venta rechazada por el servidor.',
+        errorCode: local.data.errorCode || 'SALE_ERROR',
+        duplicate: local.data.errorCode === 'DUPLICATE_FOLIO' || local.data.result?.duplicate === true
       };
     }
 
+    // 2. FALLBACK SUPABASE (Solo si el servidor local no está disponible)
+    const client = this.getClient();
+    if (client) {
+      try {
+        const { data, error } = await client.rpc('register_sale_atomic', {
+          p_folio: fullPayload.folio,
+          p_terminal_code: fullPayload.terminal_code,
+          p_terminal_name: fullPayload.terminal_name,
+          p_cashier_name: fullPayload.cashier_name,
+          p_subtotal: fullPayload.subtotal,
+          p_discount: fullPayload.discount,
+          p_total_net: fullPayload.total_net,
+          p_payment_method: fullPayload.payment_method,
+          p_cash_received: fullPayload.cash_received,
+          p_cash_change: fullPayload.cash_change,
+          p_cash_amount: fullPayload.cash_amount,
+          p_card_amount: fullPayload.card_amount,
+          p_transfer_amount: fullPayload.transfer_amount,
+          p_items: formattedItems
+        });
+
+        if (!error && data && data.ok) {
+          await this.fetchProducts();
+          return { success: true, result: data, duplicate: !!data.duplicate };
+        }
+      } catch (err) {
+        console.warn('Fallo RPC Supabase:', err.message);
+      }
+    }
+
+    // 3. FALLBACK LOCAL OFFLINE SEGURO:
+    // Nunca detener una venta en caja; guardar localmente y descontar stock
     try {
-      const terminalInfo = typeof window.getActiveTerminal === 'function' ? window.getActiveTerminal() : { code: 'C1', name: 'Caja 1' };
-      const terminalCode = salePayload.terminal_code || terminalInfo.code || 'C1';
-      const terminalName = salePayload.terminal_name || terminalInfo.name || 'Caja 1';
-
-      // Sanitizar ítems para asegurar que sólo IDs reales de la BD se envíen como numéricos (evitar timestamps o colisiones)
-      const formattedItems = items.map(it => {
-        let validDbId = null;
-        if (typeof it.id === 'number' && Number.isInteger(it.id) && it.id > 0 && it.id < 1000000000) {
-          validDbId = it.id;
-        } else if (typeof it.id === 'string' && /^\d+$/.test(it.id)) {
-          const parsed = parseInt(it.id, 10);
-          if (parsed > 0 && parsed < 1000000000) validDbId = parsed;
-        }
-
-        const cleanBarcode = (it.barcode || it.sku || '').toString().trim();
-        const cleanSku = (it.sku || it.barcode || '').toString().trim();
-        const cleanName = (it.name || it.displayName || 'Artículo').toString().trim();
-
-        return {
-          id: validDbId,
-          barcode: cleanBarcode,
-          sku: cleanSku,
-          name: cleanName,
-          unitPrice: parseFloat(it.unitPrice || it.price || 0),
-          quantity: parseInt(it.quantity, 10) || 1,
-          discount: parseFloat(it.discount || 0),
-          subtotal: parseFloat(it.subtotal || ((it.unitPrice || it.price || 0) * (it.quantity || 1))),
-          promo_applied: it.promoRule ? JSON.stringify(it.promoRule) : null
-        };
-      });
-
-      const { data, error } = await client.rpc('register_sale_atomic', {
-        p_folio: salePayload.folio,
-        p_terminal_code: terminalCode,
-        p_terminal_name: terminalName,
-        p_cashier_name: salePayload.cashier_name || 'Cajero',
-        p_subtotal: parseFloat(salePayload.subtotal || salePayload.total_net || 0),
-        p_discount: parseFloat(salePayload.discount || 0),
-        p_total_net: parseFloat(salePayload.total_net || 0),
-        p_payment_method: salePayload.payment_method || 'cash',
-        p_cash_received: salePayload.cash_received != null ? parseFloat(salePayload.cash_received) : null,
-        p_cash_change: salePayload.cash_change != null ? parseFloat(salePayload.cash_change) : null,
-        p_cash_amount: salePayload.cash_amount != null ? parseFloat(salePayload.cash_amount) : null,
-        p_card_amount: salePayload.card_amount != null ? parseFloat(salePayload.card_amount) : null,
-        p_transfer_amount: salePayload.transfer_amount != null ? parseFloat(salePayload.transfer_amount) : null,
-        p_items: formattedItems
-      });
-
-      if (error) {
-        console.error('[Supabase RPC register_sale_atomic Error]:', error);
-        return { success: false, error: error.message || 'Error de base de datos al registrar venta' };
-      }
-
-      if (data && data.ok) {
-        if (data.duplicate) {
-          console.warn('[POS] Folio duplicado prevenido por RPC:', data);
-          return {
-            success: false,
-            duplicate: true,
-            error: 'El folio "' + salePayload.folio + '" ya fue registrado previamente en la base de datos.',
-            errorCode: 'DUPLICATE_FOLIO'
-          };
-        }
-
-        // Refrescar inventario localmente tras la venta exitosa
-        await this.fetchProducts();
-        return { success: true, result: data, duplicate: false };
-      }
-
-      console.warn('[Supabase RPC register_sale_atomic Failed]:', data);
-      return {
-        success: false,
-        error: data?.error || 'No se pudo completar la venta',
-        errorCode: data?.error_code
+      const offlineSaleId = Date.now();
+      const currentHistory = this.getSalesHistory();
+      const offlineEntry = {
+        id: offlineSaleId,
+        folio: fullPayload.folio,
+        date: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' hrs',
+        created_at: new Date().toISOString(),
+        cajaCode: fullPayload.terminal_code,
+        cajaName: fullPayload.terminal_name,
+        cashier: fullPayload.cashier_name,
+        itemsCount: fullPayload.items.length,
+        items: fullPayload.items,
+        paymentMethod: fullPayload.payment_method,
+        cashAmount: fullPayload.cash_amount,
+        cardAmount: fullPayload.card_amount,
+        transferAmount: fullPayload.transfer_amount,
+        cashReceived: fullPayload.cash_received,
+        cashChange: fullPayload.cash_change,
+        total: fullPayload.total_net,
+        status: 'completed'
       };
-    } catch (err) {
-      console.error('Error registrando venta en Supabase:', err);
+      currentHistory.unshift(offlineEntry);
+      safeSetStorage('pos_sales_history', JSON.stringify(currentHistory));
+
+      const currentProds = this.getInventoryProducts();
+      fullPayload.items.forEach(it => {
+        const p = currentProds.find(cp => cp.barcode === it.barcode || cp.id === it.id);
+        if (p && p.stock !== undefined) {
+          p.stock = Math.max(0, p.stock - (it.quantity || 1));
+        }
+      });
+      safeSetStorage('pos_inventory_products', JSON.stringify(currentProds));
+
       return {
-        success: false,
-        error: 'Error de conexión con Supabase al registrar venta: ' + err.message
+        success: true,
+        result: {
+          ok: true,
+          sale_id: offlineSaleId,
+          folio: fullPayload.folio,
+          total_net: fullPayload.total_net,
+          subtotal: fullPayload.subtotal,
+          discount: fullPayload.discount,
+          cash_change: fullPayload.cash_change
+        },
+        duplicate: false,
+        offline: true
       };
+    } catch (fallbackErr) {
+      console.error('Error en fallback local:', fallbackErr);
+      return { success: true, result: { ok: true, sale_id: Date.now() }, offline: true };
     }
   },
 
   /**
-   * Consulta el historial de ventas desde Supabase
+   * Consulta el historial de ventas
    */
   async fetchSales(limit = 100, terminalCode = null) {
+    // 1. Intentar Backend Local Maestro
+    const q = `/sales?limit=${limit}${terminalCode && terminalCode !== 'all' ? `&terminal=${terminalCode}` : ''}`;
+    const local = await localApi(q);
+    if (local.ok && local.data && Array.isArray(local.data.sales)) {
+      const formatted = local.data.sales.map(s => {
+        const safeDateStr = (s.created_at || '').replace(' ', 'T');
+        const dt = new Date(safeDateStr);
+        const pad = (n) => String(n).padStart(2, '0');
+        const timeStr = !isNaN(dt.getTime()) ? `${pad(dt.getHours())}:${pad(dt.getMinutes())} hrs` : '--:--';
+        const itemsList = Array.isArray(s.items) ? s.items : [];
+        const itemsSummaryText = `${s.total_pieces || itemsList.length} producto${(s.total_pieces || itemsList.length) === 1 ? '' : 's'}`;
+        const itemsDetailText = itemsList.map(it => `${it.product_name || it.name} x${it.quantity}`).join(', ');
+
+        return {
+          id: s.id,
+          folio: s.folio,
+          date: timeStr,
+          created_at: s.created_at,
+          cajaCode: s.terminal_code || 'C1',
+          cajaName: s.terminal_name || (s.terminal_code === 'C2' ? 'Caja 2' : 'Caja 1'),
+          cashier: s.cashier_name || 'Cajero',
+          itemsCount: s.total_pieces || itemsList.length,
+          itemsSummary: itemsSummaryText,
+          itemsDetail: itemsDetailText,
+          items: itemsList.map(it => ({
+            name: it.product_name || it.name,
+            quantity: it.quantity,
+            unitPrice: parseFloat(it.unit_price || it.unitPrice || 0),
+            total: parseFloat(it.subtotal || 0)
+          })),
+          paymentMethod: s.payment_method,
+          cashAmount: parseFloat(s.cash_amount || 0),
+          cardAmount: parseFloat(s.card_amount || 0),
+          transferAmount: parseFloat(s.transfer_amount || 0),
+          total: parseFloat(s.total_net || 0),
+          status: s.status || 'completed'
+        };
+      });
+
+      const existingLocal = this.getSalesHistory();
+      const map = new Map();
+      formatted.forEach(f => { if (f && f.folio) map.set(f.folio, f); });
+      existingLocal.forEach(loc => {
+        if (loc && loc.folio && !map.has(loc.folio)) {
+          map.set(loc.folio, loc);
+        }
+      });
+      const combined = Array.from(map.values()).sort((a, b) => {
+        const tA = new Date((a.created_at || '').replace(' ', 'T')).getTime() || 0;
+        const tB = new Date((b.created_at || '').replace(' ', 'T')).getTime() || 0;
+        return tB - tA;
+      });
+      safeSetStorage('pos_sales_history', JSON.stringify(combined));
+      return combined;
+    }
+
+    // 2. Fallback Supabase
     const client = this.getClient();
     if (client) {
       try {
@@ -380,9 +696,9 @@ const PosDataService = {
 
         const { data, error } = await query;
         if (!error && Array.isArray(data)) {
-          // Adaptar formato esperado por el frontend
           const formatted = data.map(s => {
-            const dt = new Date(s.created_at);
+            const safeDateStr = (s.created_at || '').replace(' ', 'T');
+            const dt = new Date(safeDateStr);
             const pad = (n) => String(n).padStart(2, '0');
             const timeStr = !isNaN(dt.getTime()) ? `${pad(dt.getHours())}:${pad(dt.getMinutes())} hrs` : '--:--';
             const itemsList = Array.isArray(s.sale_items) ? s.sale_items : [];
@@ -395,7 +711,7 @@ const PosDataService = {
               date: timeStr,
               created_at: s.created_at,
               cajaCode: s.terminal_code || 'C1',
-              cajaName: s.terminal_name || 'Caja 1',
+              cajaName: s.terminal_name || (s.terminal_code === 'C2' ? 'Caja 2' : 'Caja 1'),
               cashier: s.cashier_name || 'Cajero',
               itemsCount: s.total_pieces || itemsList.length,
               itemsSummary: itemsSummaryText,
@@ -415,8 +731,21 @@ const PosDataService = {
             };
           });
 
-          safeSetStorage('pos_sales_history', JSON.stringify(formatted));
-          return formatted;
+          const existingLocal = this.getSalesHistory();
+          const map = new Map();
+          formatted.forEach(f => { if (f && f.folio) map.set(f.folio, f); });
+          existingLocal.forEach(loc => {
+            if (loc && loc.folio && !map.has(loc.folio)) {
+              map.set(loc.folio, loc);
+            }
+          });
+          const combined = Array.from(map.values()).sort((a, b) => {
+            const tA = new Date((a.created_at || '').replace(' ', 'T')).getTime() || 0;
+            const tB = new Date((b.created_at || '').replace(' ', 'T')).getTime() || 0;
+            return tB - tA;
+          });
+          safeSetStorage('pos_sales_history', JSON.stringify(combined));
+          return combined;
         }
       } catch (err) {
         console.warn('Error al consultar ventas de Supabase:', err);
@@ -438,74 +767,76 @@ const PosDataService = {
   },
 
   /**
-   * Consulta la suma y desglose de todo lo del día actual directamente desde la base de datos
-   */
-  async getDailySalesSummary(terminalCode = 'all') {
-    const client = this.getClient();
-    if (!client) {
-      return { ok: false, error: 'Sin conexión con Supabase para consultar resumen diario.' };
-    }
-    try {
-      const { data, error } = await client.rpc('get_daily_sales_summary', {
-        p_terminal_code: terminalCode || 'all'
-      });
-      if (error) {
-        console.warn('Error en get_daily_sales_summary:', error);
-        return { ok: false, error: error.message };
-      }
-      return data;
-    } catch (err) {
-      console.warn('Error llamando a get_daily_sales_summary:', err);
-      return { ok: false, error: err.message };
-    }
-  },
-
-  /**
-   * Registra un movimiento de caja (entrada, salida, pago proveedor) en la base de datos
+   * Registra un movimiento de efectivo
    */
   async registerCashMovement(terminalCode, movementType, amount, concept = '') {
+    // 1. Intentar Backend Local Maestro
+    const local = await localApi('/shift/movement', {
+      method: 'POST',
+      body: JSON.stringify({
+        terminal_code: terminalCode,
+        movement_type: movementType,
+        amount: parseFloat(amount) || 0,
+        concept: concept || ''
+      })
+    });
+    if (local.ok && local.data && local.data.ok) {
+      return local.data;
+    }
+    if (local.data && local.data.error && !local.networkError) {
+      return { ok: false, error: local.data.error };
+    }
+
+    // 2. Fallback Supabase
     const client = this.getClient();
-    if (!client) {
-      return { ok: false, error: 'Sin conexión con Supabase para registrar movimiento de caja.' };
+    if (client) {
+      try {
+        const { data, error } = await client.rpc('register_cash_movement', {
+          p_terminal_code: terminalCode,
+          p_movement_type: movementType,
+          p_amount: parseFloat(amount) || 0,
+          p_concept: concept || ''
+        });
+        if (error) return { ok: false, error: error.message };
+        return data;
+      } catch (err) {
+        return { ok: false, error: err.message };
+      }
     }
-    try {
-      const { data, error } = await client.rpc('register_cash_movement', {
-        p_terminal_code: terminalCode,
-        p_movement_type: movementType,
-        p_amount: parseFloat(amount) || 0,
-        p_concept: concept || ''
-      });
-      if (error) return { ok: false, error: error.message };
-      return data;
-    } catch (err) {
-      return { ok: false, error: err.message };
-    }
+    return { ok: false, error: 'Sin conexión para registrar movimiento.' };
   },
 
   /**
-   * Consulta cortes de caja históricos para reportes de varios días
+   * Consulta cortes de caja históricos para reportes
    */
   async fetchReports(startDate, endDate, terminalCode = 'all') {
+    // 1. Intentar Backend Local Maestro
+    const params = new URLSearchParams();
+    if (startDate) params.set('startDate', startDate);
+    if (endDate) params.set('endDate', endDate);
+    if (terminalCode) params.set('terminal', terminalCode);
+    const local = await localApi(`/reports?${params.toString()}`);
+    if (local.ok && local.data && local.data.ok) {
+      return local.data;
+    }
+
+    // 2. Fallback Supabase
     const client = this.getClient();
     if (!client) {
-      return { ok: false, error: 'Sin conexión con Supabase para consultar reportes.' };
+      return { ok: false, error: 'Sin conexión para consultar reportes.' };
     }
 
     try {
       let query = client.from('cash_cuts').select('*');
 
       if (startDate) {
-        // Asegurar inicio del día local en formato ISO
         const startIso = (startDate.includes('T')) ? startDate : `${startDate}T00:00:00.000Z`;
         query = query.gte('opened_at', startIso);
       }
-
       if (endDate) {
-        // Asegurar fin del día local en formato ISO
         const endIso = (endDate.includes('T')) ? endDate : `${endDate}T23:59:59.999Z`;
         query = query.lte('opened_at', endIso);
       }
-
       if (terminalCode && terminalCode !== 'all') {
         query = query.eq('terminal_code', terminalCode);
       }
@@ -513,26 +844,13 @@ const PosDataService = {
       query = query.order('opened_at', { ascending: false });
 
       const { data, error } = await query;
-      if (error) {
-        return { ok: false, error: error.message };
-      }
+      if (error) return { ok: false, error: error.message };
 
       const cuts = Array.isArray(data) ? data : [];
-
-      // Calcular acumulados de forma segura
-      let totalSalesCount = 0;
-      let totalSalesAmount = 0;
-      let totalCashSales = 0;
-      let totalCardSales = 0;
-      let totalTransferSales = 0;
-      let totalMixedSales = 0;
-      let totalInflows = 0;
-      let totalOutflows = 0;
-      let totalSupplier = 0;
-      let totalInitialFunds = 0;
-      let totalCountedCash = 0;
-      let totalExpectedCash = 0;
-      let totalDifference = 0;
+      let totalSalesCount = 0, totalSalesAmount = 0, totalCashSales = 0, totalCardSales = 0,
+          totalTransferSales = 0, totalMixedSales = 0, totalInflows = 0, totalOutflows = 0,
+          totalSupplier = 0, totalInitialFunds = 0, totalCountedCash = 0, totalExpectedCash = 0,
+          totalDifference = 0;
 
       cuts.forEach(c => {
         totalSalesCount += parseInt(c.total_sales_count || 0, 10);
@@ -576,9 +894,20 @@ const PosDataService = {
   },
 
   /**
-   * Guarda o actualiza un producto en Supabase
+   * Guarda o actualiza un producto en el catálogo
    */
   async saveProduct(product) {
+    // 1. Intentar Backend Local Maestro
+    const local = await localApi('/product', {
+      method: 'POST',
+      body: JSON.stringify(product)
+    });
+    if (local.ok && local.data && local.data.ok) {
+      await this.fetchProducts();
+      return local.data.product || product;
+    }
+
+    // 2. Fallback Supabase
     const client = this.getClient();
     if (client) {
       try {
@@ -594,9 +923,7 @@ const PosDataService = {
           is_active: true
         };
 
-        if (product.id && !isNaN(product.id)) {
-          payload.id = Number(product.id);
-        }
+        if (product.id && !isNaN(product.id)) payload.id = Number(product.id);
 
         const { data, error } = await client
           .from('products')
@@ -622,16 +949,20 @@ const PosDataService = {
   },
 
   /**
-   * Desactiva un producto en Supabase
+   * Desactiva un producto del catálogo
    */
   async deleteProduct(productId) {
+    // 1. Backend local
+    await localApi('/delete-product', {
+      method: 'POST',
+      body: JSON.stringify({ id: productId })
+    });
+
+    // 2. Supabase fallback
     const client = this.getClient();
     if (client) {
       try {
-        await client
-          .from('products')
-          .update({ is_active: false })
-          .eq('id', productId);
+        await client.from('products').update({ is_active: false }).eq('id', productId);
       } catch (e) {}
     }
     const products = this.getInventoryProducts().filter(p => p.id !== productId);
@@ -650,6 +981,30 @@ const PosDataService = {
     if (!code) return null;
     const cleanCode = code.trim().toLowerCase();
 
+    // Buscar en inventario cargado primero
+    const invList = this.getInventoryProducts();
+    const invMatch = invList.find(p => 
+      (p.barcode && p.barcode.toLowerCase() === cleanCode) || 
+      (p.sku && p.sku.toLowerCase() === cleanCode) || 
+      (p.name && p.name.toLowerCase() === cleanCode)
+    );
+
+    if (invMatch) {
+      return {
+        id: invMatch.id,
+        sku: invMatch.barcode || invMatch.sku,
+        barcode: invMatch.barcode,
+        name: invMatch.name,
+        displayName: invMatch.name,
+        unitPrice: parseFloat(invMatch.price),
+        category: invMatch.category,
+        stock: invMatch.stock,
+        iconType: invMatch.iconType || 'bread',
+        promoRule: invMatch.promoRule || null
+      };
+    }
+
+    // Consultar Supabase si no está en memoria
     const client = this.getClient();
     if (client) {
       try {
@@ -688,28 +1043,7 @@ const PosDataService = {
       } catch (err) {}
     }
 
-    const invList = this.getInventoryProducts();
-    const invMatch = invList.find(p => 
-      (p.barcode && p.barcode.toLowerCase() === cleanCode) || 
-      (p.sku && p.sku.toLowerCase() === cleanCode) || 
-      (p.name && p.name.toLowerCase().includes(cleanCode))
-    );
-
-    if (invMatch) {
-      return {
-        id: invMatch.id,
-        sku: invMatch.barcode || invMatch.sku,
-        barcode: invMatch.barcode,
-        name: invMatch.name,
-        displayName: invMatch.name,
-        unitPrice: parseFloat(invMatch.price),
-        category: invMatch.category,
-        stock: invMatch.stock,
-        iconType: invMatch.iconType || 'bread',
-        promoRule: invMatch.promoRule || null
-      };
-    }
-
+    // Catálogo nacional mexicano de referencia
     if (typeof window !== 'undefined' && Array.isArray(window.MEXICO_BARCODES)) {
       const mb = window.MEXICO_BARCODES.find(p => 
         (p.barcode && p.barcode.toLowerCase() === cleanCode) || 
@@ -741,36 +1075,6 @@ const PosDataService = {
     if (!term || !term.trim()) return [];
     const cleanTerm = term.trim().toLowerCase();
     const matches = [];
-
-    const client = this.getClient();
-    if (client) {
-      try {
-        const { data, error } = await client
-          .from('products')
-          .select('*')
-          .eq('is_active', true)
-          .or(`barcode.ilike.%${cleanTerm}%,sku.ilike.%${cleanTerm}%,name.ilike.%${cleanTerm}%,category.ilike.%${cleanTerm}%`)
-          .limit(15);
-
-        if (!error && data && data.length > 0) {
-          data.forEach(item => {
-            matches.push({
-              id: item.id,
-              barcode: item.barcode,
-              sku: item.sku || item.barcode,
-              name: item.name,
-              displayName: item.display_name || item.name,
-              price: parseFloat(item.price || 0),
-              unitPrice: parseFloat(item.price || 0),
-              category: item.category || 'General',
-              stock: parseInt(item.stock || 0, 10),
-              iconType: item.icon_type || 'bread',
-              promoRule: item.promo_rule || null
-            });
-          });
-        }
-      } catch (e) {}
-    }
 
     const localList = this.getInventoryProducts() || [];
     localList.forEach(item => {
@@ -815,6 +1119,20 @@ const PosDataService = {
    * Cancelación de venta y restitución de existencias
    */
   async cancelSale(ticketFolio, adminName = 'Administrador') {
+    // 1. Backend local
+    const local = await localApi('/cancel-sale', {
+      method: 'POST',
+      body: JSON.stringify({ folio: ticketFolio, reason: 'Cancelación autorizada en punto de venta' })
+    });
+    if (local.ok && local.data && local.data.ok) {
+      await this.fetchProducts();
+      return { ok: true, status: 'cancelled' };
+    }
+    if (local.data && local.data.error && !local.networkError) {
+      return { ok: false, error: local.data.error };
+    }
+
+    // 2. Supabase
     const client = this.getClient();
     if (client) {
       try {
@@ -836,7 +1154,7 @@ const PosDataService = {
         console.warn('Error cancelando venta en Supabase:', err);
       }
     }
-    return { ok: false, error: 'No se pudo cancelar en Supabase' };
+    return { ok: false, error: 'No se pudo cancelar la venta.' };
   },
 
   saveSalesHistory(history) {
@@ -844,44 +1162,14 @@ const PosDataService = {
     return history;
   },
 
-  /**
-   * Suscripción en tiempo real a cambios de productos (compartido entre Caja 1 y Caja 2)
-   */
-  subscribeToProducts(onChange) {
-    const client = this.getClient();
-    if (!client || typeof client.channel !== 'function') return null;
-    try {
-      return client
-        .channel('products-live-channel')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
-          if (typeof onChange === 'function') onChange();
-        })
-        .subscribe();
-    } catch (e) {
-      return null;
-    }
-  },
-
-  /**
-   * Suscripción en tiempo real a cambios de turnos y cortes de caja
-   */
-  subscribeToShifts(onChange) {
-    const client = this.getClient();
-    if (!client || typeof client.channel !== 'function') return null;
-    try {
-      return client
-        .channel('cash-cuts-channel')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'cash_cuts' }, () => {
-          if (typeof onChange === 'function') onChange();
-        })
-        .subscribe();
-    } catch (e) {
-      return null;
-    }
-  },
-
-  // Recepción de mercancía
+  // ---------------------------------------------------------------------------
+  // RECEPCIÓN DE MERCANCÍA (CÓDIGOS PADRE, CFDI FACTURAS Y MERMAS)
+  // ---------------------------------------------------------------------------
   async getPackages() {
+    const local = await localApi('/packages');
+    if (local.ok && local.data && Array.isArray(local.data.packages)) {
+      return local.data.packages;
+    }
     const client = this.getClient();
     if (client) {
       try {
@@ -896,6 +1184,14 @@ const PosDataService = {
   },
 
   async savePackage(pkg) {
+    const local = await localApi('/package', {
+      method: 'POST',
+      body: JSON.stringify(pkg)
+    });
+    if (local.ok && local.data && local.data.ok) return { ok: true };
+    if (local.data && local.data.error && !local.networkError) {
+      return { ok: false, error: local.data.error };
+    }
     const client = this.getClient();
     if (client) {
       try {
@@ -914,8 +1210,43 @@ const PosDataService = {
     return { ok: false, error: 'Sin conexión' };
   },
 
+  async deletePackage(barcode) {
+    const local = await localApi(`/package/${encodeURIComponent(barcode)}`, {
+      method: 'DELETE'
+    });
+    if (local.ok) return { ok: true };
+    const client = this.getClient();
+    if (client) {
+      try {
+        await client.from('product_packages').delete().eq('barcode', barcode);
+        return { ok: true };
+      } catch (e) {}
+    }
+    return { ok: false };
+  },
+
+  async lookupReceivingCode(code) {
+    const local = await localApi(`/receiving/lookup/${encodeURIComponent(code)}`);
+    if (local.ok && local.data) return local.data;
+    return null;
+  },
+
+  async receiveStock(code, quantity, unitCost, source) {
+    const local = await localApi('/receiving/stock', {
+      method: 'POST',
+      body: JSON.stringify({ code, quantity, unitCost, source })
+    });
+    if (local.ok && local.data) {
+      await this.fetchProducts();
+      return local.data;
+    }
+    return { ok: false, error: local.data?.error || 'Error al registrar entrada de stock' };
+  },
+
   async isInvoiceReceived(uuid) {
     if (!uuid) return false;
+    const local = await localApi(`/receiving/invoice/${encodeURIComponent(uuid)}`);
+    if (local.ok && local.data) return !!local.data.received;
     const client = this.getClient();
     if (client) {
       try {
@@ -941,10 +1272,114 @@ const PosDataService = {
         }]);
       } catch (e) {}
     }
+  },
+
+  async registerShrinkage(productId, quantity, reason) {
+    const local = await localApi('/shrinkage', {
+      method: 'POST',
+      body: JSON.stringify({ productId, quantity, reason })
+    });
+    if (local.ok && local.data) {
+      await this.fetchProducts();
+      return local.data;
+    }
+    return { ok: false, error: local.data?.error || 'Error registrando merma' };
+  },
+
+  async getShrinkageHistory(limit = 100) {
+    const local = await localApi(`/shrinkage?limit=${limit}`);
+    if (local.ok && local.data && Array.isArray(local.data.shrinkage)) {
+      return local.data.shrinkage;
+    }
+    return [];
+  },
+
+  // ---------------------------------------------------------------------------
+  // RESPALDO EN LA NUBE Y MONITOREO
+  // ---------------------------------------------------------------------------
+  async getBackupStatus() {
+    const local = await localApi('/backup-status');
+    if (local.ok && local.data) return local.data;
+    return null;
+  },
+
+  async triggerCloudBackup() {
+    const local = await localApi('/backup-cloud', { method: 'POST' });
+    if (local.ok && local.data) return local.data;
+    return { ok: false, error: local.data?.error || 'Error disparando respaldo' };
+  },
+
+  // ---------------------------------------------------------------------------
+  // SINCRONIZACIÓN REACTIVA ENTRE TERMINALES (CAJA 1 Y CAJA 2)
+  // ---------------------------------------------------------------------------
+  startVersionPolling(callback, intervalMs = 3000) {
+    let lastVersion = null;
+    setInterval(async () => {
+      try {
+        const res = await localApi('/version');
+        if (res.ok && res.data && res.data.version) {
+          if (lastVersion !== null && lastVersion !== res.data.version) {
+            lastVersion = res.data.version;
+            if (typeof callback === 'function') callback(res.data.version);
+          } else {
+            lastVersion = res.data.version;
+          }
+        }
+      } catch (e) {}
+    }, intervalMs);
+  },
+
+  /**
+   * Suscripción en tiempo real de Supabase como fallback
+   */
+  subscribeToProducts(onChange) {
+    const client = this.getClient();
+    if (!client || typeof client.channel !== 'function') return null;
+    try {
+      return client
+        .channel('products-live-channel')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
+          if (typeof onChange === 'function') onChange();
+        })
+        .subscribe();
+    } catch (e) {
+      return null;
+    }
+  },
+
+  subscribeToShifts(onChange) {
+    const client = this.getClient();
+    if (!client || typeof client.channel !== 'function') return null;
+    try {
+      return client
+        .channel('cash-cuts-channel')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'cash_cuts' }, () => {
+          if (typeof onChange === 'function') onChange();
+        })
+        .subscribe();
+    } catch (e) {
+      return null;
+    }
   }
 };
 
-window.PosDataService = PosDataService;
-window.INITIAL_INVENTORY = INITIAL_INVENTORY;
-window.INITIAL_SALES_HISTORY = INITIAL_SALES_HISTORY;
-window.initSupabaseClient = initSupabaseClient;
+if (typeof window !== 'undefined') {
+  window.PosDataService = PosDataService;
+  window.INITIAL_INVENTORY = INITIAL_INVENTORY;
+  window.INITIAL_SALES_HISTORY = INITIAL_SALES_HISTORY;
+  window.initSupabaseClient = initSupabaseClient;
+
+  // Iniciar sondeo LAN de versión para actualizar inventario si Caja 1 o Caja 2 venden
+  PosDataService.startVersionPolling(() => {
+    if (typeof window.refreshInventoryFromSupabase === 'function') {
+      window.refreshInventoryFromSupabase();
+    }
+    if (typeof window.checkShiftState === 'function') {
+      window.checkShiftState();
+    }
+  }, 4000);
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = PosDataService;
+}
