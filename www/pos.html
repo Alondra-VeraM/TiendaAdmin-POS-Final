@@ -91,6 +91,43 @@
             </div>
           </div>
 
+          <!-- Cashier Selection & Quick Register (Visible when Cajero is active) -->
+          <div class="login-cashier-section" id="loginCashierSection" style="margin-top: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <div class="login-section-label" style="margin-bottom: 0;">CAJERO EN TURNO</div>
+              <button type="button" id="btnOpenRegisterCashier" class="btn-text-register-cashier" title="Registrar un nuevo cajero">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                  <circle cx="8.5" cy="7" r="4"></circle>
+                  <line x1="20" y1="8" x2="20" y2="14"></line>
+                  <line x1="23" y1="11" x2="17" y2="11"></line>
+                </svg>
+                <span>+ Registrar cajero</span>
+              </button>
+            </div>
+
+            <div class="login-cashier-select-wrapper">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="login-cashier-icon">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                <circle cx="12" cy="7" r="4"></circle>
+              </svg>
+              <select id="loginCashierSelect" class="login-cashier-select" title="Selecciona tu nombre de cajero">
+                <!-- Se poblará dinámicamente -->
+              </select>
+            </div>
+
+            <div id="cashierPinFieldContainer" style="display: none; margin-top: 12px;">
+              <div class="login-section-label" style="font-size: 11px; margin-bottom: 6px;">PIN DE ACCESO DEL CAJERO</div>
+              <div class="login-input-wrapper" id="cashierPinInputWrapper">
+                <svg class="login-input-key-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+                <input type="password" id="loginCashierPinInput" placeholder="PIN de acceso" maxlength="6" inputmode="numeric" autocomplete="off">
+              </div>
+            </div>
+          </div>
+
           <!-- Password Field Section (Shown when Administrador is active) -->
           <div class="login-password-container" id="loginPasswordContainer" style="display: none;">
             <div class="login-section-label">CONTRASEÑA DE ADMINISTRADOR</div>
@@ -134,9 +171,73 @@
               <line x1="15" y1="12" x2="3" y2="12"></line>
             </svg>
           </button>
+
+          <!-- Register Cashier Link in Footer -->
+          <div class="login-register-footer">
+            ¿Eres un nuevo cajero? <button type="button" id="linkRegisterCashier" class="link-register-cashier">Regístrate aquí</button>
+          </div>
         </form>
       </div>
     </main>
+
+    <!-- MODAL: REGISTRO DE NUEVO CAJERO -->
+    <div id="modalRegisterCashier" class="modal-backdrop" style="display: none; z-index: 100000;">
+      <div class="modal-dialog modal-dialog-form" style="max-width: 440px;">
+        <div class="modal-dialog-header">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="width: 38px; height: 38px; border-radius: 10px; background: #ecfdf5; color: #00966d; display: flex; align-items: center; justify-content: center;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 20px; height: 20px;">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                <circle cx="8.5" cy="7" r="4"></circle>
+                <line x1="20" y1="8" x2="20" y2="14"></line>
+                <line x1="23" y1="11" x2="17" y2="11"></line>
+              </svg>
+            </div>
+            <div>
+              <h3 style="margin: 0; font-size: 17px; font-weight: 700; color: #0f172a;">Registro de Cajero</h3>
+              <p style="margin: 0; font-size: 12px; color: #64748b;">Da de alta a un cajero para registrar turnos y ventas</p>
+            </div>
+          </div>
+          <button type="button" class="btn-close-modal" id="btnCloseRegisterCashier">&times;</button>
+        </div>
+
+        <form id="formRegisterCashier" autocomplete="off" onsubmit="return false;">
+          <div style="padding: 20px 24px; display: flex; flex-direction: column; gap: 14px;">
+            <div>
+              <label for="regCashierFullName" style="display: block; font-size: 12px; font-weight: 700; color: #475569; margin-bottom: 6px; text-transform: uppercase;">
+                Nombre Completo <span style="color: #ef4444;">*</span>
+              </label>
+              <input type="text" id="regCashierFullName" class="login-reg-input" placeholder="Ej. Ana Gómez Martínez" required>
+            </div>
+
+            <div>
+              <label for="regCashierUsername" style="display: block; font-size: 12px; font-weight: 700; color: #475569; margin-bottom: 6px; text-transform: uppercase;">
+                Usuario / Identificador corto <span style="color: #ef4444;">*</span>
+              </label>
+              <input type="text" id="regCashierUsername" class="login-reg-input" placeholder="Ej. anagomez" required>
+              <small style="color: #94a3b8; font-size: 11px; display: block; margin-top: 4px;">Identificador único que se guardará en el sistema</small>
+            </div>
+
+            <div>
+              <label for="regCashierPin" style="display: block; font-size: 12px; font-weight: 700; color: #475569; margin-bottom: 6px; text-transform: uppercase;">
+                PIN de Acceso <span style="font-weight: 400; color: #94a3b8;">(Opcional)</span>
+              </label>
+              <input type="password" id="regCashierPin" class="login-reg-input" placeholder="4 a 6 dígitos (vacío = sin clave)" maxlength="6" inputmode="numeric">
+              <small style="color: #94a3b8; font-size: 11px; display: block; margin-top: 4px;">Si lo dejas vacío, el cajero puede ingresar directo sin contraseña</small>
+            </div>
+
+            <div id="regCashierError" class="login-alert-msg" style="display: none;"></div>
+          </div>
+
+          <div class="modal-form-actions" style="padding: 16px 24px; border-top: 1px solid #f1f5f9; display: flex; justify-content: flex-end; gap: 10px;">
+            <button type="button" class="btn-ghost-modal" id="btnCancelRegisterCashier">Cancelar</button>
+            <button type="submit" id="btnSubmitRegisterCashier" class="btn-primary-modal" style="background: #00966d; color: #fff; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 8px;">
+              <span>Registrar y Seleccionar</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
 
   <div class="pos-app">
@@ -239,7 +340,7 @@
                 <span>Inventario</span>
               </a>
             </li>
-            <li class="admin-only-nav">
+            <li>
               <a href="javascript:void(0)" class="nav-link" id="navSalesHistoryBtn" data-view="sales-history" onclick="window.switchView('sales-history'); return false;">
                 <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
@@ -816,10 +917,6 @@
             <div class="history-title-wrap">
               <div class="history-title-row">
                 <h2 class="history-title">Historial de Ventas</h2>
-                <span class="badge-live-pos">
-                  <span class="dot-indicator dot-blue"></span>
-                  LIVE POS
-                </span>
               </div>
               <p class="history-subtitle">Registro de transacciones en tiempo real</p>
             </div>
@@ -893,6 +990,7 @@
               <option value="cash">Efectivo</option>
               <option value="card">Tarjeta</option>
               <option value="transfer">Transferencia</option>
+              <option value="mixed">Mixto</option>
               <option value="qr">Pago QR</option>
             </select>
           </div>
@@ -1478,6 +1576,39 @@
             Imprimir Ticket
           </button>
         </div>
+      </div>
+    </div>
+
+    <!-- MODAL: ÉXITO DE COBRO CON ANIMACIÓN DE PALOMITA VERDE Y BOTÓN ÚNICO DE IMPRIMIR TICKET -->
+    <div id="modalSaleSuccess" class="modal-backdrop" style="display: none; align-items: center; justify-content: center; z-index: 999999; background: rgba(15, 23, 42, 0.75); backdrop-filter: blur(4px);">
+      <div class="modal-sale-success-card">
+        <button type="button" class="btn-close-modal" id="btnCloseSaleSuccess" style="position: absolute; top: 16px; right: 18px; font-size: 24px; background: none; border: none; color: #94a3b8; cursor: pointer;" title="Cerrar">&times;</button>
+        
+        <!-- Animación de la palomita verde -->
+        <div class="success-checkmark-wrapper">
+          <svg class="success-checkmark-svg" viewBox="0 0 52 52">
+            <circle class="success-checkmark-circle" cx="26" cy="26" r="24"/>
+            <path class="success-checkmark-check" d="M14.1 27.2l7.1 7.2 16.7-16.8"/>
+          </svg>
+        </div>
+
+        <h2 style="font-size: 24px; font-weight: 800; color: #0f172a; margin: 0 0 4px 0;">¡Venta Exitosa!</h2>
+        <div id="saleSuccessTotalText" style="font-size: 38px; font-weight: 900; color: #10b981; margin: 6px 0 10px 0; letter-spacing: -0.5px;">$0.00</div>
+        
+        <div id="saleSuccessDetails" style="font-size: 13px; font-weight: 600; color: #64748b; margin-bottom: 26px; line-height: 1.5;">
+          <div id="saleSuccessFolioText">Ticket #TK-C1-0000</div>
+          <div id="saleSuccessPaymentText" style="color: #94a3b8; font-size: 12px; margin-top: 2px;">Pago en Efectivo</div>
+        </div>
+
+        <!-- ÚNICO BOTÓN: IMPRIMIR TICKET -->
+        <button type="button" id="btnSaleSuccessPrintTicket" class="btn-sale-success-print">
+          <svg style="width: 20px; height: 20px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="6 9 6 2 18 2 18 9"></polyline>
+            <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+            <rect x="6" y="14" width="12" height="8"></rect>
+          </svg>
+          <span>Imprimir Ticket</span>
+        </button>
       </div>
     </div>
 

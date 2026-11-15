@@ -18,20 +18,39 @@ const { testConnection } = require('./database/db');
 const localDb = require('./database/localDb');
 const inventoryController = require('./controllers/inventoryController');
 
-// Inicializar la base de datos local (Master)
+// Cargar variables de entorno desde .env si existe
+try {
+  const envPath = path.join(__dirname, '.env');
+  if (fs.existsSync(envPath)) {
+    const lines = fs.readFileSync(envPath, 'utf8').split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx > 0) {
+        const k = trimmed.slice(0, eqIdx).trim();
+        const v = trimmed.slice(eqIdx + 1).trim();
+        if (!process.env[k]) process.env[k] = v;
+      }
+    }
+  }
+} catch (e) {}
+
+// Inicializar la base de datos local (Master Transaccional WAL)
 localDb.initLocalDatabase();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Configuración de Supabase
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://qluxojdodesadfthugml.supabase.co';
-const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFsdXhvamRvZGVzYWRmdGh1Z21sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxODM5NTUsImV4cCI6MjEwNzc1OTk1NX0.t5etK56r6Z2qsHPtjni7wnN1AmUSDEfQXG_4Roum2u0';
+// Configuración de Supabase (Respaldo en la nube - cargado desde .env)
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || '';
 
 let supabase = null;
 try {
   if (SUPABASE_URL && SUPABASE_KEY) {
     supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+    console.log(`[SUPABASE] Cliente inicializado para respaldo en: ${SUPABASE_URL}`);
   }
 } catch (e) {
   console.warn('⚠️ No se pudo inicializar Supabase en backend:', e.message);
@@ -431,19 +450,39 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, status: 'online', service: 'TiendaAdmin Backend' });
 });
 
+// Configuración pública para el cliente web
+app.get('/api/config', (req, res) => {
+  res.json({
+    ok: true,
+    supabaseUrl: SUPABASE_URL,
+    supabaseAnonKey: SUPABASE_KEY,
+    storeName: 'TIENDA ABARROTES NEXUS',
+    backupIntervalMinutes: parseInt(process.env.BACKUP_INTERVAL_MINUTES || '15', 10)
+  });
+});
+
 // ==============================================================================
-// RUTAS POS LOCAL MASTER (ALTA VELOCIDAD Y ACTUALIZACIÓN ATÓMICA DE STOCK)
+// RUTAS POS LOCAL MASTER (ALTA VELOCIDAD Y CERO RACE CONDITIONS PARA C1 Y C2)
 // ==============================================================================
 
-// 1. Obtener todos los productos del inventario (Supabase primario)
-app.get('/api/pos/products', async (req, res) => {
+// Helper para extraer usuario de la sesión o payload
+function resolveRequestUser(req) {
+  const token = req.headers['authorization']?.replace(/^Bearer\s+/i, '');
+  if (token) {
+    const sessionUser = localDb.getSessionUser(token);
+    if (sessionUser) return sessionUser;
+  }
+  const body = req.body || {};
+  return {
+    id: body.user_id || 1,
+    full_name: body.cashier_name || body.user_name || 'Cajero en Turno',
+    role: body.role || 'cajero'
+  };
+}
+
+// 1. Obtener productos del catálogo local maestro
+app.get('/api/pos/products', (req, res) => {
   try {
-    if (supabase) {
-      const { data, error } = await supabase.from('products').select('*').eq('is_active', true).order('name');
-      if (!error && Array.isArray(data) && data.length > 0) {
-        return res.json({ ok: true, count: data.length, products: data });
-      }
-    }
     const products = localDb.getProducts();
     res.json({ ok: true, count: products.length, products });
   } catch (err) {
@@ -451,121 +490,184 @@ app.get('/api/pos/products', async (req, res) => {
   }
 });
 
-// 2. Procesar venta atómica en Supabase con descuento y validación de turno
-app.post('/api/pos/sale', async (req, res) => {
+// 2. Guardar o actualizar producto en local maestro
+app.post(['/api/pos/product', '/api/pos/save-product'], (req, res) => {
   try {
-    const { folio, total_items, total_pieces, subtotal, discount, total_net, payment_method, cart, items, terminal_code, terminal_name, cashier_name } = req.body || {};
-    const saleItems = cart || items || [];
+    const user = resolveRequestUser(req);
+    const saved = localDb.saveProduct(req.body, user.full_name);
+    res.json({ ok: true, product: saved });
+  } catch (err) {
+    const status = err instanceof localDb.PosError ? err.status : 500;
+    res.status(status).json({ ok: false, error: err.message, errorCode: err.code });
+  }
+});
+
+// 3. Eliminar producto
+app.post('/api/pos/delete-product', (req, res) => {
+  try {
+    const { id } = req.body || {};
+    localDb.deleteProduct(id);
+    res.json({ ok: true });
+  } catch (err) {
+    const status = err instanceof localDb.PosError ? err.status : 500;
+    res.status(status).json({ ok: false, error: err.message, errorCode: err.code });
+  }
+});
+
+// 4. Procesar venta atómica en SQLite (SIN RACE CONDITIONS, VALIDA STOCK Y LIMITES)
+app.post('/api/pos/sale', (req, res) => {
+  try {
+    const user = resolveRequestUser(req);
+    const payload = req.body || {};
+    const items = payload.items || payload.cart || [];
     
-    if (!saleItems || saleItems.length === 0) {
-      return res.status(400).json({ ok: false, error: 'La venta debe contener al menos 1 artículo' });
-    }
-
-    if (supabase) {
-      const formattedItems = saleItems.map(it => ({
-        id: it.id,
-        barcode: it.barcode || it.sku,
-        sku: it.sku || it.barcode,
-        name: it.name,
-        unitPrice: parseFloat(it.unitPrice || it.price || 0),
-        quantity: parseInt(it.quantity, 10) || 1,
-        discount: parseFloat(it.discount || 0),
-        subtotal: parseFloat(it.subtotal || ((it.unitPrice || it.price || 0) * (it.quantity || 1)))
-      }));
-
-      const { data, error } = await supabase.rpc('register_sale_atomic', {
-        p_folio: folio,
-        p_terminal_code: terminal_code || 'C1',
-        p_terminal_name: terminal_name || 'Caja 1',
-        p_cashier_name: cashier_name || 'Cajero',
-        p_subtotal: parseFloat(subtotal || total_net || 0),
-        p_discount: parseFloat(discount || 0),
-        p_total_net: parseFloat(total_net || 0),
-        p_payment_method: payment_method || 'cash',
-        p_items: formattedItems
-      });
-
-      if (error) {
-        return res.status(400).json({ ok: false, error: error.message });
-      }
-      return res.json(data);
-    }
-
     const result = localDb.processSale({
-      folio,
-      total_items,
-      total_pieces,
-      subtotal,
-      discount,
-      total_net,
-      payment_method
-    }, saleItems);
+      ...payload,
+      items
+    }, user);
 
-    res.json(result);
+    res.json({ success: true, ok: true, result });
   } catch (err) {
-    console.error('[API POS SALE ERROR]', err);
-    res.status(500).json({ ok: false, error: err.message });
+    const status = err instanceof localDb.PosError ? err.status : 500;
+    console.warn(`[VENTA RECHAZADA] ${err.code || 'ERROR'}: ${err.message}`);
+    res.status(status).json({
+      success: false,
+      ok: false,
+      error: err.message,
+      errorCode: err.code || 'SALE_ERROR',
+      extra: err.extra || {}
+    });
   }
 });
 
-// 3. Cancelar venta y restituir existencias
-app.post('/api/pos/cancel-sale', async (req, res) => {
+// 5. Cancelar venta y restituir existencias
+app.post('/api/pos/cancel-sale', (req, res) => {
   try {
+    const user = resolveRequestUser(req);
     const { folio, reason } = req.body || {};
-    if (!folio) return res.status(400).json({ ok: false, error: 'Folio requerido' });
-
-    if (supabase) {
-      const { error } = await supabase
-        .from('sales')
-        .update({
-          status: 'cancelled',
-          cancelled_at: new Date().toISOString(),
-          cancellation_reason: reason || 'Cancelación de venta'
-        })
-        .eq('folio', folio);
-
-      if (!error) return res.json({ ok: true, folio, status: 'cancelled' });
-    }
-
-    const result = localDb.cancelSale(folio, reason);
+    const result = localDb.cancelSale(folio, reason, user);
     res.json(result);
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    const status = err instanceof localDb.PosError ? err.status : 500;
+    res.status(status).json({ ok: false, error: err.message, errorCode: err.code });
   }
 });
 
-// 4. Historial de ventas (Supabase primario)
-app.get('/api/pos/sales', async (req, res) => {
+// 6. Historial de ventas
+app.get('/api/pos/sales', (req, res) => {
   try {
-    if (supabase) {
-      const { data, error } = await supabase
-        .from('sales')
-        .select('*, sale_items(*)')
-        .order('created_at', { ascending: false })
-        .limit(100);
-
-      if (!error && Array.isArray(data)) {
-        return res.json({ ok: true, count: data.length, sales: data });
-      }
-    }
-    const sales = localDb.getTodaySales();
+    const limit = parseInt(req.query.limit, 10) || 100;
+    const terminal = req.query.terminal || null;
+    const sales = localDb.getSales({ limit, terminal });
     res.json({ ok: true, count: sales.length, sales });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// 5. Corte de caja local
-app.post('/api/pos/cash-cut', (req, res) => {
+// 7. Estado del turno por caja (C1 o C2)
+app.get('/api/pos/shift/:code', (req, res) => {
   try {
-    const result = localDb.saveCashCut(req.body);
+    const shift = localDb.getTerminalShift(req.params.code);
+    res.json(shift);
+  } catch (err) {
+    const status = err instanceof localDb.PosError ? err.status : 500;
+    res.status(status).json({ ok: false, error: err.message });
+  }
+});
+
+// 8. Abrir nuevo turno
+app.post('/api/pos/shift/open', (req, res) => {
+  try {
+    const user = resolveRequestUser(req);
+    const { terminal_code, initial_fund } = req.body || {};
+    const result = localDb.openTerminalShift(terminal_code, initial_fund, user);
     res.json(result);
+  } catch (err) {
+    const status = err instanceof localDb.PosError ? err.status : 500;
+    res.status(status).json({ ok: false, error: err.message, errorCode: err.code });
+  }
+});
+
+// 9. Cerrar turno (Corte de caja) + RESPALDO INMEDIATO A SUPABASE
+app.post('/api/pos/shift/close', async (req, res) => {
+  try {
+    const user = resolveRequestUser(req);
+    const { terminal_code, counted_cash, notes } = req.body || {};
+    const result = localDb.closeTerminalShift(terminal_code, counted_cash, notes, user);
+    
+    // Disparar respaldo inmediato en la nube para asegurar el corte cerrado
+    if (supabase) {
+      localDb.performCloudBackup(supabase).catch(err => {
+        console.warn('[BACKUP CORTE] Respaldo diferido tras corte:', err.message);
+      });
+    }
+
+    res.json(result);
+  } catch (err) {
+    const status = err instanceof localDb.PosError ? err.status : 500;
+    res.status(status).json({ ok: false, error: err.message, errorCode: err.code });
+  }
+});
+
+// 10. Movimientos extraordinarios de efectivo (Entrada / Salida / Proveedor)
+app.post('/api/pos/shift/movement', (req, res) => {
+  try {
+    const user = resolveRequestUser(req);
+    const { terminal_code, movement_type, amount, concept } = req.body || {};
+    const result = localDb.registerCashMovement(terminal_code, movement_type, amount, concept, user);
+    res.json(result);
+  } catch (err) {
+    const status = err instanceof localDb.PosError ? err.status : 500;
+    res.status(status).json({ ok: false, error: err.message, errorCode: err.code });
+  }
+});
+
+// 11. Lista de cajeros registrados
+app.get('/api/pos/cashiers', (req, res) => {
+  try {
+    const cashiers = localDb.listCashiers();
+    res.json({ ok: true, cashiers });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// 6. Estado del respaldo en la nube
+// 12. Registrar nuevo cajero
+app.post('/api/pos/cashiers', (req, res) => {
+  try {
+    const registered = localDb.registerCashier(req.body);
+    res.json({ ok: true, cashier: registered });
+  } catch (err) {
+    const status = err instanceof localDb.PosError ? err.status : 500;
+    res.status(status).json({ ok: false, error: err.message, errorCode: err.code });
+  }
+});
+
+// 13. Login con validación de roles y PIN
+app.post('/api/pos/login', (req, res) => {
+  try {
+    const auth = localDb.login(req.body);
+    res.json({ ok: true, ...auth });
+  } catch (err) {
+    const status = err instanceof localDb.PosError ? err.status : 401;
+    res.status(status).json({ ok: false, error: err.message, errorCode: err.code });
+  }
+});
+
+// 14. Reportes históricos de cortes
+app.get('/api/pos/reports', (req, res) => {
+  try {
+    const { startDate, endDate, terminal } = req.query;
+    const reports = localDb.getReports(startDate, endDate, terminal);
+    res.json(reports);
+  } catch (err) {
+    const status = err instanceof localDb.PosError ? err.status : 500;
+    res.status(status).json({ ok: false, error: err.message });
+  }
+});
+
+// 15. Estado del respaldo en la nube
 app.get('/api/pos/backup-status', (req, res) => {
   try {
     const status = localDb.getBackupStatus();
@@ -575,7 +677,7 @@ app.get('/api/pos/backup-status', (req, res) => {
   }
 });
 
-// 7. Ejecutar respaldo diario en la nube (On-demand o programado)
+// 16. Ejecutar respaldo en la nube bajo demanda
 app.post('/api/pos/backup-cloud', async (req, res) => {
   try {
     const result = await localDb.performCloudBackup(supabase);
@@ -585,17 +687,141 @@ app.post('/api/pos/backup-cloud', async (req, res) => {
   }
 });
 
-// Tarea programada: Respaldo diario automático en la nube (cada 24 horas)
+// 17. Lista de empaques y códigos padre (cajas)
+app.get('/api/pos/packages', (req, res) => {
+  try {
+    const packages = localDb.getPackages();
+    res.json({ ok: true, packages });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// 18. Guardar o actualizar empaque (caja)
+app.post('/api/pos/package', (req, res) => {
+  try {
+    const result = localDb.savePackage(req.body);
+    res.json(result);
+  } catch (err) {
+    const status = err instanceof localDb.PosError ? err.status : 500;
+    res.status(status).json({ ok: false, error: err.message, errorCode: err.code });
+  }
+});
+
+// 19. Eliminar empaque (caja)
+app.delete('/api/pos/package/:barcode', (req, res) => {
+  try {
+    const result = localDb.deletePackage(req.params.barcode);
+    res.json(result);
+  } catch (err) {
+    const status = err instanceof localDb.PosError ? err.status : 500;
+    res.status(status).json({ ok: false, error: err.message, errorCode: err.code });
+  }
+});
+
+// 20. Búsqueda de código para recepción (pieza o caja padre)
+app.get('/api/pos/receiving/lookup/:code', (req, res) => {
+  try {
+    const match = localDb.lookupReceivingCode(req.params.code);
+    if (!match) return res.status(404).json({ ok: false, error: 'Código no encontrado.' });
+    res.json({ ok: true, ...match });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// 21. Entrada de mercancía por recepción (piezas o cajas)
+app.post('/api/pos/receiving/stock', (req, res) => {
+  try {
+    const user = resolveRequestUser(req);
+    const { code, quantity, unit_cost, unitCost, source } = req.body || {};
+    const result = localDb.receiveStock(code, quantity, unit_cost ?? unitCost, source, user.full_name);
+    res.json(result);
+  } catch (err) {
+    const status = err instanceof localDb.PosError ? err.status : 500;
+    res.status(status).json({ ok: false, error: err.message, errorCode: err.code });
+  }
+});
+
+// 22. Recepción de factura CFDI completa
+app.post('/api/pos/receiving/invoice', (req, res) => {
+  try {
+    const user = resolveRequestUser(req);
+    const result = localDb.receiveInvoice(req.body, user.full_name);
+    res.json(result);
+  } catch (err) {
+    const status = err instanceof localDb.PosError ? err.status : 500;
+    res.status(status).json({ ok: false, error: err.message, errorCode: err.code, extra: err.extra });
+  }
+});
+
+// 23. Verificar si UUID de factura ya fue recibida
+app.get('/api/pos/receiving/invoice/:uuid', (req, res) => {
+  try {
+    const received = localDb.isInvoiceReceived(req.params.uuid);
+    res.json({ ok: true, received });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// 24. Registro de mermas
+app.post('/api/pos/shrinkage', (req, res) => {
+  try {
+    const user = resolveRequestUser(req);
+    const { product_id, productId, quantity, reason } = req.body || {};
+    const result = localDb.registerShrinkage(product_id ?? productId, quantity, reason, user.full_name);
+    res.json(result);
+  } catch (err) {
+    const status = err instanceof localDb.PosError ? err.status : 500;
+    res.status(status).json({ ok: false, error: err.message, errorCode: err.code });
+  }
+});
+
+// 25. Historial de mermas
+app.get('/api/pos/shrinkage', (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit, 10) || 100;
+    const list = localDb.getShrinkageHistory(limit);
+    res.json({ ok: true, shrinkage: list });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// 26. Versión de datos para sincronización reactiva en tiempo real (C1 y C2)
+app.get('/api/pos/version', (req, res) => {
+  res.json({ ok: true, version: localDb.getDataVersion() });
+});
+
+// ==============================================================================
+// TAREAS AUTOMÁTICAS: RESPALDO PERIÓDICO A SUPABASE (PLAN FREE: CADA 15 MIN)
+// ==============================================================================
+const BACKUP_INTERVAL_MIN = Math.max(5, parseInt(process.env.BACKUP_INTERVAL_MINUTES || '15', 10));
+console.log(`[RESPALDO PROGRAMADO] Intervalo activo: cada ${BACKUP_INTERVAL_MIN} minutos hacia Supabase.`);
+
 setInterval(async () => {
   try {
     if (supabase) {
-      console.log('[CRON DIARIO] Verificando respaldo programado en la nube...');
-      await localDb.performCloudBackup(supabase);
+      console.log(`[RESPALDO CLOUD] Ejecutando sincronización incremental hacia Supabase...`);
+      const res = await localDb.performCloudBackup(supabase);
+      if (res && res.ok) {
+        console.log(`[RESPALDO CLOUD] Respaldo exitoso a las ${res.timestamp}`);
+      }
     }
   } catch (cronErr) {
-    console.warn('[CRON DIARIO] Respaldo no pudo completarse:', cronErr.message);
+    console.warn('[RESPALDO CLOUD] Advertencia en ciclo periódico:', cronErr.message);
   }
-}, 24 * 60 * 60 * 1000); // 24 horas
+}, BACKUP_INTERVAL_MIN * 60 * 1000);
+
+// Respaldo instantáneo local seguro (Snapshot SQLite) cada hora
+setInterval(() => {
+  try {
+    localDb.createLocalSnapshot('ciclo_horario');
+  } catch (e) {
+    console.warn('[SNAPSHOT LOCAL] Error creando snapshot:', e.message);
+  }
+}, 60 * 60 * 1000);
 
 // Helper para obtener IPs locales LAN (Wi-Fi / Ethernet)
 function getLanIps() {

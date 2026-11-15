@@ -43,31 +43,27 @@ function initSalesHistory() {
     let totalAccumulatedNum = 0;
     let totalCashNum = 0;
 
-    const activeTotals = window.PosApp && window.PosApp.activeShiftTotals;
-    if (salesHistoryFilter.caja === 'all' && salesHistoryFilter.payment === 'all' && salesHistoryFilter.status === 'all' && !salesHistoryFilter.search && activeTotals) {
-      // Indicadores del turno activo tomados directamente de Supabase
-      totalTicketsNum = activeTotals.total_sales_count || 0;
-      totalAccumulatedNum = parseFloat(activeTotals.total_sales_amount || 0);
-      totalCashNum = parseFloat(activeTotals.cash_sales || 0);
-    } else {
-      salesHistoryList.forEach(item => {
-        if (item.status === 'completed') {
-          if (salesHistoryFilter.caja === 'caja1' && item.cajaCode !== 'C1') return;
-          if (salesHistoryFilter.caja === 'caja2' && item.cajaCode !== 'C2') return;
-          if (salesHistoryFilter.payment !== 'all' && item.paymentMethod !== salesHistoryFilter.payment) return;
+    const list = Array.isArray(window.salesHistoryList) && window.salesHistoryList.length > 0
+      ? window.salesHistoryList
+      : ((window.PosDataService && window.PosDataService.getSalesHistory()) || []);
 
-          totalTicketsNum++;
-          const total = parseFloat(item.total) || 0;
-          totalAccumulatedNum += total;
-          const pm = (item.paymentMethod || '').toLowerCase();
-          if (pm === 'cash' || pm === 'efectivo') {
-            totalCashNum += total;
-          } else if (pm === 'mixed') {
-            totalCashNum += parseFloat(item.cashAmount || 0);
-          }
+    list.forEach(item => {
+      if (item.status === 'completed') {
+        if (salesHistoryFilter.caja === 'caja1' && item.cajaCode !== 'C1' && item.cajaCode !== 'caja1') return;
+        if (salesHistoryFilter.caja === 'caja2' && item.cajaCode !== 'C2' && item.cajaCode !== 'caja2') return;
+        if (salesHistoryFilter.payment !== 'all' && item.paymentMethod !== salesHistoryFilter.payment) return;
+
+        totalTicketsNum++;
+        const total = parseFloat(item.total) || 0;
+        totalAccumulatedNum += total;
+        const pm = (item.paymentMethod || '').toLowerCase();
+        if (pm === 'cash' || pm === 'efectivo') {
+          totalCashNum += total;
+        } else if (pm === 'mixed' || pm === 'mixto') {
+          totalCashNum += parseFloat(item.cashAmount || 0);
         }
-      });
-    }
+      }
+    });
 
     const avgTicketNum = totalTicketsNum > 0 ? (totalAccumulatedNum / totalTicketsNum) : 0;
 
@@ -238,7 +234,11 @@ function initSalesHistory() {
 
     historyTableBody.innerHTML = '';
 
-    const filtered = salesHistoryList.filter(item => {
+    const list = Array.isArray(window.salesHistoryList) && window.salesHistoryList.length > 0
+      ? window.salesHistoryList
+      : ((window.PosDataService && window.PosDataService.getSalesHistory()) || []);
+
+    const filtered = list.filter(item => {
       // Filtro de texto
       if (salesHistoryFilter.search) {
         const q = salesHistoryFilter.search.toLowerCase();
@@ -251,8 +251,8 @@ function initSalesHistory() {
       }
 
       // Filtro de caja
-      if (salesHistoryFilter.caja === 'caja1' && item.cajaCode !== 'C1') return false;
-      if (salesHistoryFilter.caja === 'caja2' && item.cajaCode !== 'C2') return false;
+      if (salesHistoryFilter.caja === 'caja1' && item.cajaCode !== 'C1' && item.cajaCode !== 'caja1') return false;
+      if (salesHistoryFilter.caja === 'caja2' && item.cajaCode !== 'C2' && item.cajaCode !== 'caja2') return false;
 
       // Filtro de método de pago
       if (salesHistoryFilter.payment !== 'all' && item.paymentMethod !== salesHistoryFilter.payment) {
@@ -405,20 +405,23 @@ function initSalesHistory() {
 
   if (btnExportSalesHistory) {
     btnExportSalesHistory.addEventListener('click', () => {
-      if (salesHistoryList.length === 0) {
+      const list = Array.isArray(window.salesHistoryList) && window.salesHistoryList.length > 0
+        ? window.salesHistoryList
+        : ((window.PosDataService && window.PosDataService.getSalesHistory()) || []);
+      if (list.length === 0) {
         showModal('Historial Vacío', 'No hay registros de ventas para exportar.');
         return;
       }
       const headers = ['Folio', 'Fecha/Hora', 'Caja', 'Cajero', 'Artículos', 'Método de Pago', 'Total', 'Estado'];
-      const rows = salesHistoryList.map(t => [
+      const rows = list.map(t => [
         `"${t.folio}"`,
         `"${t.date} (${t.timeAgo || ''})"`,
-        `"${t.cajaName}"`,
-        `"${t.cashier}"`,
-        `"${(t.itemsDetail || t.itemsSummary).replace(/"/g, '""')}"`,
-        `"${t.paymentMethod}"`,
-        t.total.toFixed(2),
-        `"${t.status}"`
+        `"${t.cajaName || t.cajaCode || 'Caja 1'}"`,
+        `"${t.cashier || 'Cajero'}"`,
+        `"${((t.itemsDetail || t.itemsSummary || '')).replace(/"/g, '""')}"`,
+        `"${t.paymentMethod || 'cash'}"`,
+        (parseFloat(t.total) || 0).toFixed(2),
+        `"${t.status || 'completed'}"`
       ]);
       const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(r => r.join(','))].join('\r\n');
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -435,7 +438,10 @@ function initSalesHistory() {
 
   if (btnReprintLastTicket) {
     btnReprintLastTicket.addEventListener('click', () => {
-      const lastTicket = salesHistoryList.find(t => t.status === 'completed') || salesHistoryList[0];
+      const list = Array.isArray(window.salesHistoryList) && window.salesHistoryList.length > 0
+        ? window.salesHistoryList
+        : ((window.PosDataService && window.PosDataService.getSalesHistory()) || []);
+      const lastTicket = list.find(t => t.status === 'completed') || list[0];
       if (lastTicket) {
         openTicketModal(lastTicket);
       } else {

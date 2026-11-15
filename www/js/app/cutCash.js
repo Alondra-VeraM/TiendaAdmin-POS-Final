@@ -51,7 +51,7 @@ function initCutCash() {
       if (aperturaLabel) aperturaLabel.textContent = `${formatShortDate(start)} · ${formatTime(start)}`;
       if (durationLabel) durationLabel.textContent = `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
       if (initialFundLabel) initialFundLabel.textContent = `$${parseFloat(shift.initial_fund || 1000).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-      if (cashierLabel) cashierLabel.textContent = shift.cashier_name || 'Cajero';
+      if (cashierLabel) cashierLabel.textContent = shift.cashier_name || (window.currentSessionUser && window.currentSessionUser.name) || 'Cajero';
 
       const live = shiftData.live_totals || {};
       const totalSalesCount = live.total_sales_count || 0;
@@ -138,6 +138,7 @@ function initCutCash() {
       }
 
       const last = (shiftData && shiftData.last_shift) || {};
+      if (cashierLabel) cashierLabel.textContent = last.cashier_name || (window.currentSessionUser && window.currentSessionUser.name) || 'Cajero';
       if (aperturaLabel) aperturaLabel.textContent = last.opened_at ? `${formatShortDate(new Date(last.opened_at))} · ${formatTime(new Date(last.opened_at))}` : 'Sin apertura';
       if (durationLabel) durationLabel.textContent = last.closed_at ? 'Cerrado' : '0 h 0 min';
       if (initialFundLabel) initialFundLabel.textContent = `$${parseFloat(last.initial_fund || 1000).toFixed(2)}`;

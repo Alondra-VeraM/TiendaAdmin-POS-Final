@@ -33,7 +33,7 @@ var getProductIconSvg = function(i) { if (window.getProductIconSvg && window.get
 
 // Función global de cambio de vista
 window.switchView = function(viewName) {
-  if (viewName !== 'pos') {
+  if (viewName === 'inventory' || viewName === 'cash-cut' || viewName === 'reports') {
     if (window.currentSessionUser && window.currentSessionUser.role === 'cajero') {
       if (typeof window.requestAdminAuth === 'function') {
         window.requestAdminAuth(() => executeSwitchView(viewName));
@@ -196,79 +196,73 @@ function getMexicoDateString(date = new Date()) {
 window.getMexicoDateString = getMexicoDateString;
 
 /**
- * Consulta las ventas del turno activo para la caja activa desde Supabase (ERROR 1 & ERROR 2)
- * Garantiza que al abrir un turno nuevo inicie estrictamente con 0 ventas y $0.00
+ * Consulta las ventas del turno activo para el corte de caja y sincroniza el historial de ventas
+ * Protege estrictamente los tickets completados para que nunca se borren del historial
  */
 async function refreshSalesFromSupabase() {
   const terminalInfo = typeof window.getActiveTerminal === 'function' ? window.getActiveTerminal() : { code: 'C1', name: 'Caja 1' };
 
+  // 1. Sincronizar estado del turno activo para Corte de Caja
   if (dataService && typeof dataService.getTerminalShift === 'function') {
-    const shiftData = await dataService.getTerminalShift(terminalInfo.code);
-    window.currentShift = shiftData;
+    try {
+      const shiftData = await dataService.getTerminalShift(terminalInfo.code);
+      window.currentShift = shiftData;
 
-    if (shiftData && shiftData.is_open) {
-      window.PosApp.activeShiftTotals = shiftData.live_totals || {
-        total_sales_count: 0,
-        total_sales_amount: 0.00,
-        avg_ticket: 0.00,
-        cash_sales: 0.00,
-        card_sales: 0.00,
-        transfer_sales: 0.00,
-        mixed_sales: 0.00
-      };
-
-      const formattedSales = (shiftData.sales || []).map(s => {
-        const dt = new Date(s.created_at);
-        const pad = (n) => String(n).padStart(2, '0');
-        const timeStr = !isNaN(dt.getTime()) ? `${pad(dt.getHours())}:${pad(dt.getMinutes())} hrs` : '--:--';
-        const itemsList = Array.isArray(s.items) ? s.items : [];
-        const itemsSummaryText = `${s.total_pieces || itemsList.length} producto${(s.total_pieces || itemsList.length) === 1 ? '' : 's'}`;
-        const itemsDetailText = itemsList.map(it => `${it.name || it.product_name} x${it.quantity}`).join(', ');
-
-        return {
-          id: s.id,
-          folio: s.folio,
-          date: timeStr,
-          created_at: s.created_at,
-          cajaCode: s.terminal_code || terminalInfo.code,
-          cajaName: s.terminal_name || (s.terminal_code === 'C2' ? 'Caja 2' : 'Caja 1'),
-          cashier: s.cashier_name || 'Cajero',
-          itemsCount: s.total_pieces || itemsList.length,
-          itemsSummary: itemsSummaryText,
-          itemsDetail: itemsDetailText,
-          items: itemsList.map(it => ({
-            name: it.name || it.product_name,
-            quantity: it.quantity,
-            unitPrice: parseFloat(it.unitPrice || it.unit_price || 0),
-            total: parseFloat(it.subtotal || 0)
-          })),
-          paymentMethod: s.payment_method,
-          cashAmount: parseFloat(s.cash_amount || 0),
-          cardAmount: parseFloat(s.card_amount || 0),
-          transferAmount: parseFloat(s.transfer_amount || 0),
-          total: parseFloat(s.total_net || 0),
-          status: s.status || 'completed'
+      if (shiftData && shiftData.is_open) {
+        window.PosApp.activeShiftTotals = shiftData.live_totals || {
+          total_sales_count: 0,
+          total_sales_amount: 0.00,
+          avg_ticket: 0.00,
+          cash_sales: 0.00,
+          card_sales: 0.00,
+          transfer_sales: 0.00,
+          mixed_sales: 0.00
         };
-      });
-
-      window.PosApp.salesHistoryList = formattedSales;
-    } else {
-      // Turno cerrado: El historial del turno activo muestra estrictamente 0 ventas
-      window.PosApp.activeShiftTotals = {
-        total_sales_count: 0,
-        total_sales_amount: 0.00,
-        avg_ticket: 0.00,
-        cash_sales: 0.00,
-        card_sales: 0.00,
-        transfer_sales: 0.00,
-        mixed_sales: 0.00
-      };
-      window.PosApp.salesHistoryList = [];
+      } else {
+        // Turno cerrado: El corte de caja del turno actual muestra 0 ventas activas
+        window.PosApp.activeShiftTotals = {
+          total_sales_count: 0,
+          total_sales_amount: 0.00,
+          avg_ticket: 0.00,
+          cash_sales: 0.00,
+          card_sales: 0.00,
+          transfer_sales: 0.00,
+          mixed_sales: 0.00
+        };
+      }
+    } catch (e) {
+      console.warn('Error consultando turno de terminal:', e);
     }
-
-    if (typeof window.renderSalesHistory === 'function') window.renderSalesHistory();
-    if (typeof window.renderCashCut === 'function') window.renderCashCut();
   }
+
+  // 2. Sincronizar Historial de Ventas global (sin borrar ventas locales)
+  if (dataService && typeof dataService.fetchSales === 'function') {
+    try {
+      const sales = await dataService.fetchSales(100);
+      if (Array.isArray(sales) && sales.length > 0) {
+        window.PosApp.salesHistoryList = sales;
+      } else {
+        const local = (dataService.getSalesHistory && dataService.getSalesHistory()) || [];
+        if (local.length > 0) {
+          window.PosApp.salesHistoryList = local;
+        }
+      }
+    } catch (e) {
+      console.warn('Error sincronizando historial de ventas:', e);
+      const local = (dataService.getSalesHistory && dataService.getSalesHistory()) || [];
+      if (local.length > 0) {
+        window.PosApp.salesHistoryList = local;
+      }
+    }
+  } else if (dataService && typeof dataService.getSalesHistory === 'function') {
+    const local = dataService.getSalesHistory() || [];
+    if (local.length > 0) {
+      window.PosApp.salesHistoryList = local;
+    }
+  }
+
+  if (typeof window.renderSalesHistory === 'function') window.renderSalesHistory();
+  if (typeof window.renderCashCut === 'function') window.renderCashCut();
 }
 window.refreshSalesFromSupabase = refreshSalesFromSupabase;
 

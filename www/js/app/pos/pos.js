@@ -887,46 +887,17 @@ function initPos() {
         shiftNameFooter.innerHTML = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;margin-right:6px;"></span>${terminalInfo.name} • Turno Abierto`;
       }
     } else {
-      // TURNO CERRADO: BLOQUEO ESTRICTO DE VENTAS
-      if (!shiftClosedBanner) {
-        shiftClosedBanner = document.createElement('div');
-        shiftClosedBanner.id = 'shiftClosedBanner';
-        shiftClosedBanner.className = 'shift-closed-banner';
-        shiftClosedBanner.innerHTML = `
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;background:#fee2e2;border:1px solid #f87171;color:#991b1b;padding:10px 14px;border-radius:8px;margin-bottom:12px;">
-            <div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;">
-              <svg style="width:20px;height:20px;flex-shrink:0;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="12" y1="8" x2="12" y2="12"></line>
-                <line x1="12" y1="16" x2="12.01" y2="16"></line>
-              </svg>
-              <span>${terminalInfo.name} CERRADA: Ventas bloqueadas hasta abrir un nuevo turno.</span>
-            </div>
-            <button type="button" id="btnOpenShiftFromPos" style="background:#dc2626;color:#ffffff;border:none;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">
-              Abrir Nuevo Turno
-            </button>
-          </div>
-        `;
-        const currentSaleCard = document.querySelector('.current-sale-card');
-        if (currentSaleCard && currentSaleCard.parentNode) {
-          currentSaleCard.parentNode.insertBefore(shiftClosedBanner, currentSaleCard);
-        }
-        const btnOpen = document.getElementById('btnOpenShiftFromPos');
-        if (btnOpen) {
-          btnOpen.addEventListener('click', () => window.openNewShiftModal());
-        }
-      } else {
-        shiftClosedBanner.style.display = 'block';
-      }
-
-      if (btnCheckoutEl) {
-        btnCheckoutEl.classList.add('btn-checkout-disabled');
-        btnCheckoutEl.setAttribute('disabled', 'true');
-        btnCheckoutEl.title = 'Caja cerrada. Debe abrir un nuevo turno para realizar ventas.';
-      }
+      // TURNO CERRADO: Permitir cobro fluido (auto-apertura de turno al cobrar)
+      if (shiftClosedBanner) shiftClosedBanner.style.display = 'none';
       if (shiftNameFooter) {
-        shiftNameFooter.innerHTML = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ef4444;margin-right:6px;"></span>${terminalInfo.name} • Turno Cerrado`;
+        shiftNameFooter.innerHTML = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;margin-right:6px;"></span>${terminalInfo.name} • Listo para Cobrar`;
       }
+    }
+
+    if (btnCheckoutEl) {
+      btnCheckoutEl.classList.remove('btn-checkout-disabled');
+      btnCheckoutEl.removeAttribute('disabled');
+      btnCheckoutEl.title = 'Completar venta actual';
     }
 
     return shiftData;
