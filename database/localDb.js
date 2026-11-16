@@ -541,11 +541,22 @@ function searchProducts(term, limit = 15) {
 function validatePromo(promo, price) {
   if (promo === undefined || promo === null || promo === '') return null;
   const p = typeof promo === 'string' ? parsePromo(promo) : promo;
-  if (!p || p.type !== 'bundle') throw new PosError('INVALID_INPUT', 'Promoción inválida (solo se admite tipo "bundle").');
-  const q = num(p.quantity, { name: 'Piezas de la promoción', min: 2, max: 1000, integer: true });
-  const bp = num(p.bundle_price, { name: 'Precio de la promoción', min: 0.01 });
-  if (toCents(bp) >= toCents(q * price)) throw new PosError('INVALID_INPUT', 'El precio de la promoción debe ser menor al precio normal.');
-  return JSON.stringify({ type: 'bundle', quantity: q, bundle_price: bp, badge_text: String(p.badge_text || `${q}x$${bp}`).slice(0, 40) });
+  if (!p || typeof p !== 'object') {
+    throw new PosError('INVALID_INPUT', 'Promoción inválida.');
+  }
+  const type = p.type || (p.discount_percent !== undefined || p.percentage !== undefined ? 'percentage' : 'bundle');
+  if (type === 'bundle') {
+    const q = num(p.quantity, { name: 'Piezas de la promoción', min: 2, max: 1000, integer: true });
+    const bp = num(p.bundle_price, { name: 'Precio de la promoción', min: 0.01 });
+    if (price !== undefined && price !== null && toCents(bp) >= toCents(q * price)) {
+      throw new PosError('INVALID_INPUT', 'El precio de la promoción debe ser menor al precio normal.');
+    }
+    return JSON.stringify({ type: 'bundle', quantity: q, bundle_price: bp, badge_text: String(p.badge_text || `${q}x$${bp}`).slice(0, 40) });
+  } else if (type === 'percentage' || type === 'percent') {
+    const pct = num(p.discount_percent ?? p.percentage ?? p.discount, { name: 'Porcentaje de descuento', min: 0.01, max: 100 });
+    return JSON.stringify({ type: 'percentage', discount_percent: pct, badge_text: String(p.badge_text || `-${pct}%`).slice(0, 40) });
+  }
+  throw new PosError('INVALID_INPUT', 'Promoción inválida (se admiten tipos "bundle" o "percentage").');
 }
 
 function insertMovement(d, { productId, type, qty, prev, next, cost, reference, notes, user }) {
@@ -957,11 +968,24 @@ function processSale(payload, user) {
       let discC = 0;
       let promoLabel = null;
       const promo = parsePromo(p.promo_rule);
-      if (promo && promo.type === 'bundle' && promo.quantity >= 2) {
-        const bundles = Math.floor(qty / promo.quantity);
-        if (bundles > 0) {
-          discC = Math.max(0, Math.min(grossC, bundles * promo.quantity * priceC - bundles * toCents(promo.bundle_price)));
-          promoLabel = promo.badge_text || 'Promoción';
+      if (promo) {
+        const promoType = promo.type || (promo.discount_percent !== undefined ? 'percentage' : 'bundle');
+        if (promoType === 'bundle' && promo.quantity >= 2) {
+          const bundles = Math.floor(qty / promo.quantity);
+          if (bundles > 0) {
+            const normalBundleCostC = bundles * promo.quantity * priceC;
+            const promoBundleCostC = bundles * toCents(promo.bundle_price);
+            if (promoBundleCostC < normalBundleCostC) {
+              discC = Math.max(0, Math.min(grossC, normalBundleCostC - promoBundleCostC));
+              promoLabel = promo.badge_text || `${promo.quantity}x$${promo.bundle_price}`;
+            }
+          }
+        } else if (promoType === 'percentage' || promoType === 'percent') {
+          const pct = Number(promo.discount_percent ?? promo.percentage ?? 0);
+          if (pct > 0 && pct <= 100) {
+            discC = Math.max(0, Math.min(grossC, Math.round(grossC * (pct / 100))));
+            promoLabel = promo.badge_text || `-${pct}%`;
+          }
         }
       }
       subtotalC += grossC;

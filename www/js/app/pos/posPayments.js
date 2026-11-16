@@ -195,21 +195,50 @@ function initPosPayments() {
     try {
       res = await window.PosDataService.registerSale(salePayload, state.cart);
     } catch (checkoutErr) {
-      console.warn('[COBRO LOCAL FALLBACK]:', checkoutErr);
-      res = { success: true, result: { ok: true, sale_id: Date.now() }, fallback: true };
+      console.error('[COBRO ERROR]:', checkoutErr);
+      res = {
+        success: false,
+        error: 'Error inesperado durante el cobro: ' + (checkoutErr.message || checkoutErr),
+        errorCode: 'CHECKOUT_EXCEPTION'
+      };
     }
 
     isCheckoutInProgress = false;
     if (btnCheckout) btnCheckout.disabled = false;
-    if (checkoutText) checkoutText.textContent = `Cobrar $0.00`;
 
-    // Si hubo un rechazo explícito por stock insuficiente
-    if (res && res.success === false && res.errorCode === 'INSUFFICIENT_STOCK') {
-      showModal('Inventario Insuficiente', `${res.error || 'No hay suficientes existencias.'}\n\nSe ha actualizado el inventario.`);
-      if (typeof window.refreshInventoryFromSupabase === 'function') window.refreshInventoryFromSupabase();
+    // VALIDACIÓN ESTRICTA DE ERRORES: Si falló el guardado, NUNCA continuar a Venta Exitosa
+    if (!res || res.success === false) {
       if (checkoutText) checkoutText.textContent = `Cobrar $${totals.totalNet.toFixed(2)}`;
+
+      const errCode = res?.errorCode || 'SALE_ERROR';
+      const errMsg = res?.error || 'Ocurrió un error desconocido al registrar la venta.';
+
+      if (errCode === 'INSUFFICIENT_STOCK') {
+        showModal('Inventario Insuficiente', `${errMsg}\n\nSe ha actualizado el inventario.`);
+        if (typeof window.refreshInventoryFromSupabase === 'function') window.refreshInventoryFromSupabase();
+      } else if (errCode === 'SHIFT_CLOSED' || errCode === 'NO_ACTIVE_SHIFT') {
+        showModal('Turno Cerrado', `${errMsg}\n\nPor favor abre un turno antes de cobrar.`);
+      } else if (errCode === 'DUPLICATE_FOLIO') {
+        showModal('Folio Duplicado', `${errMsg}\n\nGenerando un nuevo folio para reintentar.`);
+        state.folio = (typeof window.generateUniqueFolio === 'function')
+          ? window.generateUniqueFolio(terminalInfo.code)
+          : `#TK-${terminalInfo.code}-${Date.now()}`;
+      } else if (errCode === 'PRICE_CHANGED') {
+        showModal('Cambio de Precio', `${errMsg}\n\nLos precios del catálogo han cambiado.`);
+        if (typeof window.refreshInventoryFromSupabase === 'function') window.refreshInventoryFromSupabase();
+      } else if (errCode === 'INSUFFICIENT_PAYMENT') {
+        showModal('Pago Insuficiente', `${errMsg}`);
+      } else if (errCode === 'INVALID_INPUT') {
+        showModal('Datos Inválidos', `${errMsg}`);
+      } else if (errCode === 'STORAGE_FAILED') {
+        showModal('Error de Almacenamiento', `No se pudo registrar la venta ni guardarla localmente:\n\n${errMsg}`);
+      } else {
+        showModal('Error al Registrar Venta', `No se pudo procesar la venta.\n\nDetalle: ${errMsg}`);
+      }
       return;
     }
+
+    if (checkoutText) checkoutText.textContent = `Cobrar $0.00`;
 
     // VENTA EXITOSA
     const now = new Date();

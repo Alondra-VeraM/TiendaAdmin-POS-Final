@@ -6,6 +6,16 @@
 // =========================================================================
 // DELEGACIONES GLOBALES PARA LLAMADAS CRUZADAS ENTRE MÓDULOS
 // =========================================================================
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+window.escapeHtml = escapeHtml;
 var showModal = function(title, msg) { if (window.showModal && window.showModal !== showModal) return window.showModal(title, msg); };
 var renderInventory = function() { if (window.renderInventory && window.renderInventory !== renderInventory) return window.renderInventory(); };
 var renderSalesHistory = function() { if (window.renderSalesHistory && window.renderSalesHistory !== renderSalesHistory) return window.renderSalesHistory(); };

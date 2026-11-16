@@ -4,6 +4,10 @@
  */
 
 function initPosSearch() {
+  const escapeHtml = window.escapeHtml || function(str) {
+    if (str === null || str === undefined) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  };
   const cartBarcodeInput = document.getElementById('cartBarcodeInput');
 
   // =========================================================================
@@ -48,10 +52,10 @@ function initPosSearch() {
                 ${getProductIconSvg(item.iconType || item.icon_type)}
               </div>
               <div class="suggestion-texts">
-                <div class="suggestion-name">${item.name}</div>
+                <div class="suggestion-name">${escapeHtml(item.name || '')}</div>
                 <div class="suggestion-meta">
-                  <span>${item.category}</span>
-                  <span>• ${item.barcode}</span>
+                  <span>${escapeHtml(item.category || '')}</span>
+                  <span>• ${escapeHtml(item.barcode || '')}</span>
                 </div>
               </div>
             </div>

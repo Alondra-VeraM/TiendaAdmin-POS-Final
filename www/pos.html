@@ -560,6 +560,27 @@
               </div>
             </div>
 
+            <!-- Desglose de Totales (Subtotal, Descuento promocional, IVA) -->
+            <div class="pos-cart-totals-breakdown" id="posCartTotalsBreakdown">
+              <div class="totals-breakdown-row">
+                <span class="totals-breakdown-label">Subtotal:</span>
+                <span class="totals-breakdown-val" id="summarySubtotal">$0.00</span>
+              </div>
+              <div class="totals-breakdown-row discount-row" id="summaryDiscountsRow" style="display: none;">
+                <span class="totals-breakdown-label discount-label">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;margin-right:4px;vertical-align:-1px;">
+                    <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path>
+                  </svg>
+                  Descuento promo:
+                </span>
+                <span class="totals-breakdown-val discount-val discount-green" id="summaryDiscounts">-$0.00</span>
+              </div>
+              <div class="totals-breakdown-row tax-row">
+                <span class="totals-breakdown-label">IVA (16% incl.):</span>
+                <span class="totals-breakdown-val" id="summaryTax">$0.00</span>
+              </div>
+            </div>
+
             <!-- Large Total Highlight Box (Bloque Naranja) -->
             <div class="total-net-card">
               <span class="total-net-label">TOTAL NETO A COBRAR</span>

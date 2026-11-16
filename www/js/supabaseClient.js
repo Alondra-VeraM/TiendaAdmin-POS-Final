@@ -616,7 +616,11 @@ const PosDataService = {
       };
     } catch (fallbackErr) {
       console.error('Error en fallback local:', fallbackErr);
-      return { success: true, result: { ok: true, sale_id: Date.now() }, offline: true };
+      return {
+        success: false,
+        error: 'No se pudo registrar la venta ni almacenar el respaldo local: ' + (fallbackErr.message || fallbackErr),
+        errorCode: 'STORAGE_FAILED'
+      };
     }
   },
 
