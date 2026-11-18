@@ -47,13 +47,15 @@ async function startBackendServer() {
       return;
     }
 
-    // Buscar la ruta de server.js
+    // Buscar la ruta de server.js (producción empaquetada o desarrollo)
     const candidates = [
+      process.resourcesPath ? path.join(process.resourcesPath, 'backend', 'server.js') : '',
       path.join(__dirname, '../../server.js'),
       path.join(process.cwd(), 'server.js'),
       path.join(app.getAppPath(), '../server.js'),
-      path.join(app.getAppPath(), '../../server.js')
-    ];
+      path.join(app.getAppPath(), '../../server.js'),
+      path.join(app.getAppPath(), '../backend/server.js')
+    ].filter(Boolean);
 
     const serverScript = candidates.find(p => fs.existsSync(p));
     if (!serverScript) {
@@ -64,9 +66,19 @@ async function startBackendServer() {
     const projectRoot = path.dirname(serverScript);
     console.log('[ServerManager] Iniciando backend local automáticamente en background:', serverScript);
 
+    const userDataDir = app.getPath('userData');
+    const backendEnv = {
+      ...process.env,
+      PORT: '3000'
+    };
+    if (app.isPackaged) {
+      backendEnv.LOCAL_DB_FILE = path.join(userDataDir, 'pos_local.sqlite');
+      backendEnv.LOCAL_BACKUP_DIR = path.join(userDataDir, 'backups');
+    }
+
     serverProcess = fork(serverScript, [], {
       cwd: projectRoot,
-      env: { ...process.env, PORT: '3000' },
+      env: backendEnv,
       stdio: 'inherit'
     });
 

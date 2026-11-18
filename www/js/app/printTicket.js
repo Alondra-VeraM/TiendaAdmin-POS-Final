@@ -44,19 +44,19 @@
    */
   async function getStoreSettings() {
     let storeName = 'TIENDA ABARROTES';
-    let storeAddress = 'Av. Insurgentes Sur 1234, Col. Del Valle, Benito Juárez, CDMX';
+    let storeAddress = '';
 
     try {
       if (global.PosDataService && typeof global.PosDataService.getStoreSettings === 'function') {
         const s = await global.PosDataService.getStoreSettings();
         if (s) {
           if (s.store_name) storeName = s.store_name;
-          if (s.address) storeAddress = s.address;
+          if (s.address && !String(s.address).includes('Insurgentes')) storeAddress = s.address;
         }
       } else if (typeof localStorage !== 'undefined') {
         const cached = JSON.parse(localStorage.getItem('pos_store_settings') || '{}');
         if (cached.store_name) storeName = cached.store_name;
-        if (cached.address) storeAddress = cached.address;
+        if (cached.address && !String(cached.address).includes('Insurgentes')) storeAddress = cached.address;
       }
     } catch (e) {
       console.warn('[printTicket] Error obteniendo store_settings:', e);
@@ -98,6 +98,7 @@
             color: #000;
             font-size: 11px;
             line-height: 1.25;
+            zoom: 0.8;
           }
           .ticket-title { font-weight: bold; font-size: 13px; text-align: center; margin-bottom: 2px; }
           .ticket-subtitle { font-weight: bold; font-size: 12px; text-align: center; margin: 2px 0; }
@@ -232,9 +233,9 @@
       }
 
       // Construcción del HTML para vista térmica
+      const cleanAddress = (storeAddress || '').trim();
       const ticketHTML = `
-        <div class="ticket-title">${escapeTicketHtml(storeName)}</div>
-        <div class="ticket-address">${escapeTicketHtml(storeAddress)}</div>
+        <div class="ticket-title">${escapeTicketHtml(storeName)}</div>${cleanAddress ? `\n        <div class="ticket-address">${escapeTicketHtml(cleanAddress)}</div>` : ''}
         <div class="ticket-subtitle">Ticket de Venta</div>
         <div class="ticket-meta">Fecha: ${escapeTicketHtml(dateStr)}</div>
         <div class="ticket-meta">Caja: ${escapeTicketHtml(cajaLabel)}</div>${cashierToPrint ? `\n        <div class="ticket-meta">Cajero: ${escapeTicketHtml(cashierToPrint)}</div>` : ''}
@@ -284,7 +285,7 @@
         html: ticketHTML
       };
 
-      // 1. Envío a Electron si está disponible
+      // 1. Envío directo y silencioso en Electron si está disponible
       if (global.electronAPI && typeof global.electronAPI.printTicket === 'function') {
         try {
           const result = await global.electronAPI.printTicket(ticketPayload);
@@ -297,7 +298,30 @@
         }
       }
 
-      // 2. Fallback a iframe para navegador / móvil
+      // 2. Si se ejecuta desde navegador local, intentar impresión directa vía servidor Node.js (sin diálogo)
+      if (typeof fetch === 'function') {
+        try {
+          const basePath = (global.BACKEND_API_URL)
+            ? global.BACKEND_API_URL
+            : ((typeof window !== 'undefined' && (window.location.protocol === 'file:' || (window.location.port !== '3000' && window.location.hostname === 'localhost'))) ? 'http://localhost:3000' : '');
+          const resp = await fetch(`${basePath}/api/pos/print-ticket`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(ticketPayload)
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data && data.ok) {
+              console.log('[printTicket] Ticket impreso directamente vía backend local:', data);
+              return { ok: true, method: 'backend_direct', result: data };
+            }
+          }
+        } catch (backendPrintErr) {
+          console.warn('[printTicket] Impresión directa vía backend no disponible, usando iframe fallback:', backendPrintErr.message);
+        }
+      }
+
+      // 3. Fallback a iframe (escala 80% aplicada en CSS)
       printViaIframe(ticketHTML, folio);
       return { ok: true, method: 'iframe' };
     } catch (error) {

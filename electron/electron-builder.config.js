@@ -6,6 +6,19 @@ module.exports = {
     output: 'dist',
     buildResources: 'assets',
   },
+  win: {
+    target: [
+      { target: 'nsis', arch: ['x64'] }
+    ]
+  },
+  nsis: {
+    oneClick: true,
+    perMachine: false,
+    createDesktopShortcut: true,
+    createStartMenuShortcut: true,
+    shortcutName: 'Lector POS',
+    runAfterFinish: false
+  },
   files: [
     'build/**/*',
     'app/**/*',
@@ -20,4 +33,13 @@ module.exports = {
     // Platform runtime + plugins, prepared by `capacitor-electron vendor`.
     { from: 'vendor/node_modules', to: 'node_modules' },
   ],
+  extraResources: [
+    { from: '../server.js', to: 'backend/server.js' },
+    { from: '../database', to: 'backend/database', filter: ['**/*', '!backups/**', '!*.sqlite*'] },
+    { from: '../routes', to: 'backend/routes' },
+    { from: '../controllers', to: 'backend/controllers' },
+    { from: '../node_modules', to: 'backend/node_modules' },
+    { from: 'modules/printer.js', to: 'backend/electron/modules/printer.js' },
+    { from: '../.env', to: 'backend/.env' }
+  ]
 };

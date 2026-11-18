@@ -2,7 +2,8 @@
   "name": "lector-pos-electron",
   "productName": "Lector POS",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "author": "TiendaAdmin POS",
   "description": "Electron platform project for Lector POS.",
   "main": "build/main.js",
   "scripts": {

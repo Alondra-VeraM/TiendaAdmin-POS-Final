@@ -787,6 +787,29 @@ app.get('/api/pos/version', (req, res) => {
 // 27. Módulo de Movimientos de Caja (Ingresos y Egresos) - Responsabilidad separada
 app.use('/api/pos', createCashMovementsRouter({ localDb, supabase, resolveRequestUser }));
 
+// 28. Impresión directa de ticket térmico desde navegador hacia impresora POS-58 en Windows
+app.post('/api/pos/print-ticket', async (req, res) => {
+  try {
+    const candidates = [
+      path.join(__dirname, 'electron/modules/printer.js'),
+      path.join(__dirname, '../electron/modules/printer.js'),
+      path.join(__dirname, '../../modules/printer.js')
+    ];
+    const printerPath = candidates.find(p => fs.existsSync(p));
+    if (!printerPath) {
+      return res.status(404).json({ ok: false, error: 'Módulo de impresora no disponible.' });
+    }
+    const { printTicketDirectWindows } = require(printerPath);
+    const result = await printTicketDirectWindows(req.body || {});
+    if (result && result.ok) {
+      return res.json(result);
+    }
+    return res.status(404).json(result || { ok: false, reason: 'NO_THERMAL_PRINTER' });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // ==============================================================================
 // TAREAS AUTOMÁTICAS: RESPALDO PERIÓDICO A SUPABASE (PLAN FREE: CADA 15 MIN)
 // ==============================================================================

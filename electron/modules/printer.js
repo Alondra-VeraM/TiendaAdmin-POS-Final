@@ -1,4 +1,12 @@
-const { ipcMain, BrowserWindow } = require('electron');
+let ipcMain = null;
+let BrowserWindow = null;
+try {
+    const electron = require('electron');
+    if (electron && typeof electron === 'object') {
+        ipcMain = electron.ipcMain || null;
+        BrowserWindow = electron.BrowserWindow || null;
+    }
+} catch (_) {}
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -329,17 +337,20 @@ function registerPrinterHandlers() {
         // =========================================================================
         // MÉTODO 1: Impresión Directa RAW ESC/POS (Óptima y definitiva para POS-58)
         // =========================================================================
-        try {
-            const ticketData = (typeof ticketInput === 'object') ? ticketInput : null;
-            if (ticketData) {
-                console.log('[Printer] Generando comandos nativos RAW ESC/POS...');
-                const rawBuffer = buildEscPosTicket(ticketData);
-                await sendRawToWindowsPrinter(printer.name, rawBuffer);
-                console.log('[Printer] ¡Ticket impreso exitosamente vía RAW ESC/POS!');
-                return { success: true, mode: 'raw_esc_pos', printerName: printer.name };
+        const isVirtualPrinter = /microsoft print to pdf|onenote|xps|fax|send to/i.test(printer.name);
+        if (!isVirtualPrinter) {
+            try {
+                const ticketData = (typeof ticketInput === 'object') ? ticketInput : null;
+                if (ticketData) {
+                    console.log('[Printer] Generando comandos nativos RAW ESC/POS...');
+                    const rawBuffer = buildEscPosTicket(ticketData);
+                    await sendRawToWindowsPrinter(printer.name, rawBuffer);
+                    console.log('[Printer] ¡Ticket impreso exitosamente vía RAW ESC/POS!');
+                    return { success: true, mode: 'raw_esc_pos', printerName: printer.name };
+                }
+            } catch (rawErr) {
+                console.warn('[Printer] Falló el método directo RAW, intentando método de respaldo gráfico:', rawErr);
             }
-        } catch (rawErr) {
-            console.warn('[Printer] Falló el método directo RAW, intentando método de respaldo gráfico:', rawErr);
         }
 
         // =========================================================================
@@ -425,6 +436,7 @@ function registerPrinterHandlers() {
                     deviceName: printer.name,
                     color: false,
                     printBackground: false,
+                    scaleFactor: 80,
                     margins: { marginType: 'none' }
                 }, (success, failureReason) => {
                     if (success) resolve();
@@ -452,4 +464,33 @@ function registerPrinterHandlers() {
 
 }
 
-module.exports = { registerPrinterHandlers, buildEscPosTicket, getCashierDisplayName };
+function findWindowsThermalPrinter() {
+    return new Promise((resolve) => {
+        if (process.platform !== 'win32') return resolve(null);
+        const ps = 'Add-Type -AssemblyName System.Drawing; [System.Drawing.Printing.PrinterSettings]::InstalledPrinters | ForEach-Object { $_ }';
+        execFile('powershell.exe', ['-NoProfile', '-Command', ps], { timeout: 3000 }, (err, stdout) => {
+            if (err || !stdout) return resolve(null);
+            const names = stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+            const match = names.find(n => /pos[-\s]?58|pos58|thermal|58mm|80mm|epson|tm-t|xprinter|bixolon|star|receipt/i.test(n) && !/pdf|xps|onenote|fax/i.test(n));
+            resolve(match || null);
+        });
+    });
+}
+
+async function printTicketDirectWindows(ticketData) {
+    const printerName = await findWindowsThermalPrinter();
+    if (!printerName) {
+        return { ok: false, reason: 'NO_THERMAL_PRINTER' };
+    }
+    const rawBuffer = buildEscPosTicket(ticketData);
+    await sendRawToWindowsPrinter(printerName, rawBuffer);
+    return { ok: true, mode: 'raw_esc_pos_backend', printerName };
+}
+
+module.exports = {
+    registerPrinterHandlers,
+    buildEscPosTicket,
+    getCashierDisplayName,
+    sendRawToWindowsPrinter,
+    printTicketDirectWindows
+};

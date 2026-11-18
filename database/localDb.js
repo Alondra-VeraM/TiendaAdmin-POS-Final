@@ -15,9 +15,9 @@ const path = require('path');
 const crypto = require('crypto');
 const { DatabaseSync } = require('node:sqlite');
 
-const DB_DIR = __dirname;
-const DB_FILE = process.env.LOCAL_DB_FILE || path.join(DB_DIR, 'pos_local.sqlite');
-const BACKUP_DIR = path.join(DB_DIR, 'backups');
+const DB_DIR = path.dirname(process.env.LOCAL_DB_FILE || path.join(__dirname, 'pos_local.sqlite'));
+const DB_FILE = process.env.LOCAL_DB_FILE || path.join(__dirname, 'pos_local.sqlite');
+const BACKUP_DIR = process.env.LOCAL_BACKUP_DIR || path.join(DB_DIR, 'backups');
 
 const TERMINALS = { C1: 'Caja 1', C2: 'Caja 2' };
 const PAYMENT_METHODS = ['cash', 'card', 'transfer', 'mixed'];
