@@ -365,6 +365,15 @@
               </a>
             </li>
             <li class="admin-only-nav">
+              <a href="javascript:void(0)" class="nav-link" id="navCashMovementsBtn" data-view="cash-movements" onclick="window.switchView('cash-movements'); return false;">
+                <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="12" y1="1" x2="12" y2="23"></line>
+                  <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                </svg>
+                <span>Ingresos y Egresos</span>
+              </a>
+            </li>
+            <li class="admin-only-nav">
               <a href="javascript:void(0)" class="nav-link" id="navReportsBtn" data-view="reports" onclick="window.switchView('reports'); return false;">
                 <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M18 20V10"></path>
@@ -1185,8 +1194,12 @@
 
             <!-- Card 2: Movimientos de caja -->
             <div class="cut-card">
-              <div class="cut-card-header">
+              <div class="cut-card-header" style="display: flex; justify-content: space-between; align-items: center;">
                 <h3 class="cut-card-title">Movimientos de caja</h3>
+                <a href="javascript:void(0)" onclick="window.switchView('cash-movements'); return false;" style="font-size: 12px; font-weight: 600; color: #0284c7; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;">
+                  <span>Inspeccionar ingresos/egresos</span>
+                  <span>&rarr;</span>
+                </a>
               </div>
 
               <div class="cut-table-wrap">
@@ -1201,16 +1214,9 @@
                   <tbody>
                     <tr>
                       <td>
-                        <span style="font-weight: 500; color: #1e293b;">Ventas</span>
-                      </td>
-                      <td style="text-align: center;" id="cutMoveVentasCount">0</td>
-                      <td style="text-align: right; font-weight: 600;" id="cutMoveVentasAmount">$0.00</td>
-                    </tr>
-                    <tr>
-                      <td>
                         <span class="concept-cell">
                           <span class="arrow-in">↑</span>
-                          <span>Entradas de efectivo</span>
+                          <span>Total de ingresos</span>
                         </span>
                       </td>
                       <td style="text-align: center;" id="cutMoveEntriesCount">0</td>
@@ -1220,21 +1226,11 @@
                       <td>
                         <span class="concept-cell">
                           <span class="arrow-out">↓</span>
-                          <span>Salidas de efectivo</span>
+                          <span>Total de egresos</span>
                         </span>
                       </td>
                       <td style="text-align: center;" id="cutMoveExitsCount">0</td>
                       <td style="text-align: right;" class="amt-negative" id="cutMoveExitsAmount">- $0.00</td>
-                    </tr>
-                    <tr>
-                      <td>
-                        <span class="concept-cell">
-                          <span class="arrow-out">↓</span>
-                          <span>Pagos a proveedores</span>
-                        </span>
-                      </td>
-                      <td style="text-align: center;" id="cutMoveSupplierCount">0</td>
-                      <td style="text-align: right;" class="amt-negative" id="cutMoveSupplierAmount">- $0.00</td>
                     </tr>
                   </tbody>
                 </table>
@@ -1255,7 +1251,7 @@
                   <span class="expected-cash-label">Efectivo esperado</span>
                   <span class="expected-cash-value" id="cutExpectedCash">$1,000.00</span>
                 </div>
-                <span class="expected-cash-hint">Fondo inicial + Ventas efectivo + Entradas - Salidas - Pagos</span>
+                <span class="expected-cash-hint">Fondo inicial + Ventas en efectivo + Ingresos en efectivo - Egresos en efectivo</span>
               </div>
 
               <!-- Efectivo contado -->
@@ -1288,6 +1284,9 @@
           </div>
         </div>
       </main>
+
+      <!-- 5. MÓDULO DE INGRESOS Y EGRESOS (Definido y llamado desde cashMovements/cashMovements.html) -->
+      <div id="cashMovementsMount"></div>
 
       <!-- 6. REPORTES DE CORTES HISTÓRICOS VIEW -->
       <main class="reports-view-container" id="reportsViewContainer" style="display: none; padding: 24px; flex-direction: column; gap: 20px; width: 100%; overflow-y: auto;">
@@ -1849,12 +1848,16 @@
   <!-- Global Configuration -->
   <script src="js/config.js"></script>
   <!-- Client Data Logic -->
+  <script src="js/cashMovements/cashMovementsClient.js"></script>
   <script src="js/supabaseClient.js"></script>
+  <!-- Módulo de Impresión de Tickets (debe cargarse antes que salesHistory.js y posPayments.js) -->
+  <script src="js/app/printTicket.js"></script>
   <!-- Main Application Logic (Modular) -->
   <script src="js/app/app.js"></script>
   <script src="js/app/login.js"></script>
   <script src="js/app/inventory.js"></script>
   <script src="js/app/salesHistory.js"></script>
+  <script src="js/app/cashMovements.js"></script>
   <script src="js/app/cutCash.js"></script>
   <script src="js/app/reports.js"></script>
   <script src="js/app/pos/pos.js"></script>

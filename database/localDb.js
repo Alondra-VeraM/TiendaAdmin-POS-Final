@@ -218,12 +218,17 @@ CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id);
 
 CREATE TABLE IF NOT EXISTS cash_movements (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  cash_cut_id INTEGER NOT NULL REFERENCES cash_cuts(id),
-  terminal_code TEXT NOT NULL,
+  cash_cut_id INTEGER REFERENCES cash_cuts(id),
+  terminal_code TEXT NOT NULL CHECK (terminal_code IN ('C1','C2')),
+  terminal_name TEXT NOT NULL DEFAULT 'Caja 1',
+  user_id INTEGER REFERENCES users(id),
+  user_name TEXT NOT NULL DEFAULT 'Administrador',
   movement_type TEXT NOT NULL CHECK (movement_type IN ('inflow','outflow','supplier_payout')),
+  concept TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'Otros',
   amount REAL NOT NULL CHECK (amount > 0),
-  concept TEXT,
-  user_name TEXT,
+  payment_method TEXT NOT NULL DEFAULT 'cash' CHECK (payment_method IN ('cash','card','transfer')),
+  notes TEXT,
   created_at TEXT NOT NULL DEFAULT ${TS},
   updated_at TEXT NOT NULL DEFAULT ${TS},
   ${SYNC_COLS}
@@ -295,6 +300,18 @@ function createDirtyTriggers(d) {
 }
 
 function migrateLegacyTables(d) {
+  // Asegurar columnas nuevas en cash_movements para bases de datos existentes
+  try {
+    const cols = d.prepare('PRAGMA table_info(cash_movements)').all().map(c => c.name);
+    if (cols.length > 0) {
+      if (!cols.includes('terminal_name')) d.exec("ALTER TABLE cash_movements ADD COLUMN terminal_name TEXT NOT NULL DEFAULT 'Caja 1'");
+      if (!cols.includes('user_id')) d.exec('ALTER TABLE cash_movements ADD COLUMN user_id INTEGER REFERENCES users(id)');
+      if (!cols.includes('category')) d.exec("ALTER TABLE cash_movements ADD COLUMN category TEXT NOT NULL DEFAULT 'Otros'");
+      if (!cols.includes('payment_method')) d.exec("ALTER TABLE cash_movements ADD COLUMN payment_method TEXT NOT NULL DEFAULT 'cash'");
+      if (!cols.includes('notes')) d.exec('ALTER TABLE cash_movements ADD COLUMN notes TEXT');
+    }
+  } catch (_) {}
+
   // Migra la base anterior (tabla "productos") si existe, sin perder stock.
   const legacy = d.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='productos'`).get();
   if (!legacy) return;
@@ -802,26 +819,48 @@ function computeShiftTotals(d, cut) {
       COALESCE(SUM(CASE WHEN payment_method='card' THEN total_net END),0) card_sales,
       COALESCE(SUM(CASE WHEN payment_method='transfer' THEN total_net END),0) transfer_sales,
       COALESCE(SUM(CASE WHEN payment_method='mixed' THEN total_net END),0) mixed_sales,
-      COALESCE(SUM(cash_amount),0) cash_in_drawer
+      COALESCE(SUM(cash_amount),0) cash_in_drawer,
+      COUNT(CASE WHEN payment_method='cash' THEN 1 END) cash_cnt,
+      COUNT(CASE WHEN payment_method='card' THEN 1 END) card_cnt,
+      COUNT(CASE WHEN payment_method='transfer' THEN 1 END) transfer_cnt,
+      COUNT(CASE WHEN payment_method='mixed' THEN 1 END) mixed_cnt
     FROM sales WHERE cash_cut_id = ? AND status = 'completed'
   `).get(cut.id);
   const m = d.prepare(`
-    SELECT COALESCE(SUM(CASE WHEN movement_type='inflow' THEN amount END),0) inflows,
-           COALESCE(SUM(CASE WHEN movement_type='outflow' THEN amount END),0) outflows,
-           COALESCE(SUM(CASE WHEN movement_type='supplier_payout' THEN amount END),0) supplier
-    FROM cash_movements WHERE cash_cut_id = ?
-  `).get(cut.id);
-  const expectedC = toCents(cut.initial_fund) + toCents(s.cash_in_drawer) + toCents(m.inflows) - toCents(m.outflows) - toCents(m.supplier);
+    SELECT
+      COALESCE(SUM(CASE WHEN movement_type='inflow' THEN amount END),0) total_inflows,
+      COALESCE(SUM(CASE WHEN movement_type='outflow' THEN amount END),0) total_outflows,
+      COALESCE(SUM(CASE WHEN movement_type='inflow' AND (payment_method IS NULL OR payment_method='cash') THEN amount END),0) cash_inflows,
+      COALESCE(SUM(CASE WHEN movement_type='outflow' AND (payment_method IS NULL OR payment_method='cash') THEN amount END),0) cash_outflows,
+      COALESCE(SUM(CASE WHEN movement_type='supplier_payout' THEN amount END),0) supplier,
+      COUNT(CASE WHEN movement_type='inflow' THEN 1 END) inflows_count,
+      COUNT(CASE WHEN movement_type='outflow' THEN 1 END) outflows_count,
+      COUNT(CASE WHEN movement_type='inflow' AND (payment_method IS NULL OR payment_method='cash') THEN 1 END) cash_inflows_count,
+      COUNT(CASE WHEN movement_type='outflow' AND (payment_method IS NULL OR payment_method='cash') THEN 1 END) cash_outflows_count
+    FROM cash_movements
+    WHERE cash_cut_id = ? OR (cash_cut_id IS NULL AND terminal_code = ? AND created_at >= ?)
+  `).get(cut.id, cut.terminal_code, cut.opened_at);
+  const expectedC = toCents(cut.initial_fund) + toCents(s.cash_in_drawer) + toCents(m.cash_inflows) - toCents(m.cash_outflows) - toCents(m.supplier);
   return {
     total_sales_count: s.cnt,
     total_sales_amount: fromCents(toCents(s.total)),
     avg_ticket: s.cnt ? fromCents(toCents(s.total) / s.cnt) : 0,
     cash_sales: fromCents(toCents(s.cash_sales)),
+    cash_sales_count: s.cash_cnt,
     card_sales: fromCents(toCents(s.card_sales)),
+    card_sales_count: s.card_cnt,
     transfer_sales: fromCents(toCents(s.transfer_sales)),
+    transfer_sales_count: s.transfer_cnt,
     mixed_sales: fromCents(toCents(s.mixed_sales)),
-    cash_inflows: fromCents(toCents(m.inflows)),
-    cash_outflows: fromCents(toCents(m.outflows)),
+    mixed_sales_count: s.mixed_cnt,
+    cash_inflows: fromCents(toCents(m.cash_inflows)),
+    cash_outflows: fromCents(toCents(m.cash_outflows)),
+    total_inflows: fromCents(toCents(m.total_inflows)),
+    total_outflows: fromCents(toCents(m.total_outflows)),
+    inflows_count: m.inflows_count,
+    outflows_count: m.outflows_count,
+    cash_inflows_count: m.cash_inflows_count,
+    cash_outflows_count: m.cash_outflows_count,
     supplier_payouts: fromCents(toCents(m.supplier)),
     expected_cash: fromCents(expectedC)
   };
@@ -875,6 +914,13 @@ function closeTerminalShift(code, countedCash, notes, user) {
   return tx((d) => {
     const cut = getOpenCut(d, tc);
     if (!cut) throw new PosError('SHIFT_CLOSED', `${TERMINALS[tc]} no tiene un turno abierto.`, 409);
+
+    // Enlazar movimientos del turno que no tengan asignado el cash_cut_id
+    d.prepare(`
+      UPDATE cash_movements SET cash_cut_id = ?
+      WHERE cash_cut_id IS NULL AND terminal_code = ? AND created_at >= ?
+    `).run(cut.id, tc, cut.opened_at);
+
     const t = computeShiftTotals(d, cut);
     const diff = fromCents(toCents(counted) - toCents(t.expected_cash));
     const info = d.prepare(`
@@ -890,23 +936,28 @@ function closeTerminalShift(code, countedCash, notes, user) {
   });
 }
 
+// ------------------------------------------------------------------------------
+// MÓDULO DE MOVIMIENTOS DE CAJA (INGRESOS Y EGRESOS) - RESPONSABILIDAD SEPARADA
+// ------------------------------------------------------------------------------
+const { createCashMovementsModule } = require('./cashMovements/cashMovementsDb');
+
+const cashMovementsModule = createCashMovementsModule({
+  initLocalDatabase,
+  terminalCode,
+  TERMINALS,
+  toCents,
+  num,
+  str,
+  PosError,
+  getOpenCut,
+  computeShiftTotals,
+  createLocalSnapshot,
+  tx,
+  nowIso
+});
+
 function registerCashMovement(code, type, amount, concept, user) {
-  const tc = terminalCode(code);
-  if (!['inflow', 'outflow', 'supplier_payout'].includes(type)) throw new PosError('INVALID_INPUT', 'Tipo de movimiento inválido.');
-  const amt = num(amount, { name: 'Monto', min: 0.01, max: 500000 });
-  return tx((d) => {
-    const cut = getOpenCut(d, tc);
-    if (!cut) throw new PosError('SHIFT_CLOSED', `${TERMINALS[tc]} no tiene un turno abierto.`, 409);
-    if (type !== 'inflow') {
-      const t = computeShiftTotals(d, cut);
-      if (toCents(amt) > toCents(t.expected_cash)) {
-        throw new PosError('INSUFFICIENT_CASH', `No hay suficiente efectivo en caja. Disponible: $${t.expected_cash.toFixed(2)}.`, 409);
-      }
-    }
-    d.prepare(`INSERT INTO cash_movements (cash_cut_id, terminal_code, movement_type, amount, concept, user_name) VALUES (?,?,?,?,?,?)`)
-      .run(cut.id, tc, type, amt, concept ? String(concept).slice(0, 150) : null, user.full_name);
-    return { ok: true, totals: computeShiftTotals(d, cut) };
-  });
+  return cashMovementsModule.registerCashMovement(code, type, amount, concept, user);
 }
 
 // ------------------------------------------------------------------------------
@@ -1210,6 +1261,21 @@ function getBackupStatus() {
 
 let isCloudBackingUp = false;
 
+// Consultar movimientos económicos (ingresos y egresos) - Delegado al módulo separado
+function getCashMovements(options = {}) {
+  return cashMovementsModule.getCashMovements(options);
+}
+
+// Registrar un movimiento económico - Delegado al módulo separado
+function saveCashMovement(mov, user) {
+  return cashMovementsModule.saveCashMovement(mov, user);
+}
+
+// Eliminar un movimiento económico - Delegado al módulo separado
+function deleteCashMovement(id) {
+  return cashMovementsModule.deleteCashMovement(id);
+}
+
 /**
  * Respaldo periódico incremental a Supabase (Plan Free)
  * Sube únicamente los registros modificados (rev > synced_rev) sin saturar conexiones ni cuotas
@@ -1285,6 +1351,8 @@ module.exports = {
   registerStockEntry, registerShrinkage, getShrinkageHistory,
   lookupReceivingCode, receiveStock, receiveInvoice, isInvoiceReceived,
   getPackages, savePackage, deletePackage,
+  // Movimientos de caja
+  getCashMovements, saveCashMovement, deleteCashMovement,
   // turnos y ventas
   getTerminalShift, openTerminalShift, closeTerminalShift, registerCashMovement,
   processSale, cancelSale, getSales,

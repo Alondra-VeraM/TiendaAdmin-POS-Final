@@ -128,9 +128,11 @@ async function localApi(endpoint, options = {}) {
     isBackendConnected = true;
     return { ok: res.ok, status: res.status, data: null };
   } catch (err) {
+    isBackendConnected = false;
     return { ok: false, status: 0, error: err.message, networkError: true };
   }
 }
+if (typeof window !== 'undefined') window.localApi = localApi;
 
 // Inicialización de cliente Supabase
 initSupabaseClient();
@@ -770,44 +772,36 @@ const PosDataService = {
     return [];
   },
 
-  /**
-   * Registra un movimiento de efectivo
-   */
-  async registerCashMovement(terminalCode, movementType, amount, concept = '') {
-    // 1. Intentar Backend Local Maestro
-    const local = await localApi('/shift/movement', {
-      method: 'POST',
-      body: JSON.stringify({
-        terminal_code: terminalCode,
-        movement_type: movementType,
-        amount: parseFloat(amount) || 0,
-        concept: concept || ''
-      })
-    });
-    if (local.ok && local.data && local.data.ok) {
-      return local.data;
-    }
-    if (local.data && local.data.error && !local.networkError) {
-      return { ok: false, error: local.data.error };
-    }
+  localApi,
 
-    // 2. Fallback Supabase
-    const client = this.getClient();
-    if (client) {
-      try {
-        const { data, error } = await client.rpc('register_cash_movement', {
-          p_terminal_code: terminalCode,
-          p_movement_type: movementType,
-          p_amount: parseFloat(amount) || 0,
-          p_concept: concept || ''
-        });
-        if (error) return { ok: false, error: error.message };
-        return data;
-      } catch (err) {
-        return { ok: false, error: err.message };
-      }
-    }
-    return { ok: false, error: 'Sin conexión para registrar movimiento.' };
+  /**
+   * ==============================================================================
+   * MOVIMIENTOS ECONÓMICOS (INGRESOS Y EGRESOS)
+   * Responsabilidad extraída y modularizada en: www/js/cashMovements/cashMovementsClient.js
+   * ==============================================================================
+   */
+  async fetchCashMovements(terminalCode = null) {
+    const mod = (typeof CashMovementsClient !== 'undefined') ? CashMovementsClient : (typeof require !== 'undefined' ? require('./cashMovements/cashMovementsClient') : null);
+    if (mod) return mod.fetchCashMovements(terminalCode, this);
+    return [];
+  },
+
+  async saveCashMovement(movementPayload) {
+    const mod = (typeof CashMovementsClient !== 'undefined') ? CashMovementsClient : (typeof require !== 'undefined' ? require('./cashMovements/cashMovementsClient') : null);
+    if (mod) return mod.saveCashMovement(movementPayload, this);
+    return { ok: false, error: 'Módulo de movimientos no disponible' };
+  },
+
+  async deleteCashMovement(id) {
+    const mod = (typeof CashMovementsClient !== 'undefined') ? CashMovementsClient : (typeof require !== 'undefined' ? require('./cashMovements/cashMovementsClient') : null);
+    if (mod) return mod.deleteCashMovement(id, this);
+    return { ok: false, error: 'Módulo de movimientos no disponible' };
+  },
+
+  async registerCashMovement(terminalCode, movementType, amount, concept = '') {
+    const mod = (typeof CashMovementsClient !== 'undefined') ? CashMovementsClient : (typeof require !== 'undefined' ? require('./cashMovements/cashMovementsClient') : null);
+    if (mod) return mod.registerCashMovement(terminalCode, movementType, amount, concept, this);
+    return { ok: false, error: 'Módulo de movimientos no disponible' };
   },
 
   /**
@@ -1298,6 +1292,15 @@ const PosDataService = {
     return [];
   },
 
+  async fetchShrinkage(limit = 100) {
+    const local = await localApi(`/shrinkage?limit=${limit}`);
+    if (local.ok && local.data && Array.isArray(local.data.shrinkage)) {
+      safeSetStorage('pos_shrinkage_history', JSON.stringify(local.data.shrinkage));
+      return local.data.shrinkage;
+    }
+    return this.getShrinkageHistory();
+  },
+
   // ---------------------------------------------------------------------------
   // RESPALDO EN LA NUBE Y MONITOREO
   // ---------------------------------------------------------------------------
@@ -1318,18 +1321,28 @@ const PosDataService = {
   // ---------------------------------------------------------------------------
   startVersionPolling(callback, intervalMs = 3000) {
     let lastVersion = null;
+    let failedCount = 0;
     setInterval(async () => {
+      // Si el backend local no responde, espaciar reintentos a 15s para no saturar la consola
+      if (failedCount >= 2 && (Date.now() % 15000 > intervalMs)) {
+        return;
+      }
       try {
         const res = await localApi('/version');
         if (res.ok && res.data && res.data.version) {
+          failedCount = 0;
           if (lastVersion !== null && lastVersion !== res.data.version) {
             lastVersion = res.data.version;
             if (typeof callback === 'function') callback(res.data.version);
           } else {
             lastVersion = res.data.version;
           }
+        } else {
+          failedCount++;
         }
-      } catch (e) {}
+      } catch (e) {
+        failedCount++;
+      }
     }, intervalMs);
   },
 

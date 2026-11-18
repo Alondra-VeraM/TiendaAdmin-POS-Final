@@ -97,28 +97,40 @@ function initCutCash() {
       if (elFootCount) elFootCount.textContent = totalSalesCount;
       if (elFootAmount) elFootAmount.textContent = `$${totalSalesAmount.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-      // Movimientos de caja registrados en el día / turno
-      const elMoveVentasCount = document.getElementById('cutMoveVentasCount');
-      const elMoveVentasAmount = document.getElementById('cutMoveVentasAmount');
-      if (elMoveVentasCount) elMoveVentasCount.textContent = totalSalesCount;
-      if (elMoveVentasAmount) elMoveVentasAmount.textContent = `$${totalSalesAmount.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      // Consultar movimientos económicos adicionales del turno actual
+      const movSummary = (typeof window.getShiftCashMovementsSummary === 'function')
+        ? window.getShiftCashMovementsSummary(start, terminalInfo.code, shift.id)
+        : { cashIncomesCount: 0, cashIncomesTotal: 0, cashExpensesCount: 0, cashExpensesTotal: 0, totalIncomesCount: 0, totalIncomesAmount: 0, totalExpensesCount: 0, totalExpensesAmount: 0 };
 
+      // Total de ingresos y egresos del turno (en la tarjeta de Movimientos de caja)
+      const inCount = Math.max(live.inflows_count || 0, movSummary.totalIncomesCount || 0);
+      const inTotal = Math.max(parseFloat(live.total_inflows || 0), movSummary.totalIncomesAmount || 0);
       const elMoveEntriesAmount = document.getElementById('cutMoveEntriesAmount');
-      if (elMoveEntriesAmount) elMoveEntriesAmount.textContent = `+ $${parseFloat(shift.cash_inflows || 0).toFixed(2)}`;
+      const elMoveEntriesCount = document.getElementById('cutMoveEntriesCount');
+      if (elMoveEntriesCount) elMoveEntriesCount.textContent = inCount;
+      if (elMoveEntriesAmount) elMoveEntriesAmount.textContent = `+ $${inTotal.toFixed(2)}`;
 
+      const outCount = Math.max(live.outflows_count || 0, movSummary.totalExpensesCount || 0);
+      const outTotal = Math.max(parseFloat(live.total_outflows || 0), movSummary.totalExpensesAmount || 0);
       const elMoveExitsAmount = document.getElementById('cutMoveExitsAmount');
-      if (elMoveExitsAmount) elMoveExitsAmount.textContent = `- $${parseFloat(shift.cash_outflows || 0).toFixed(2)}`;
+      const elMoveExitsCount = document.getElementById('cutMoveExitsCount');
+      if (elMoveExitsCount) elMoveExitsCount.textContent = outCount;
+      if (elMoveExitsAmount) elMoveExitsAmount.textContent = `- $${outTotal.toFixed(2)}`;
 
-      const elMoveSupplierAmount = document.getElementById('cutMoveSupplierAmount');
-      if (elMoveSupplierAmount) elMoveSupplierAmount.textContent = `- $${parseFloat(shift.supplier_payouts || 0).toFixed(2)}`;
+      // Conteo de efectivo esperado:
+      // Fondo inicial + Ventas en efectivo + Ingresos en efectivo - Egresos en efectivo
+      // REGLA: Solo los movimientos cuyo método de pago es 'cash' (efectivo) afectan el efectivo esperado.
+      const initialFundVal = parseFloat(shift.initial_fund || 1000);
+      const cashInflowsVal = Math.max(parseFloat(live.cash_inflows || 0), movSummary.cashIncomesTotal || 0);
+      const cashOutflowsVal = Math.max(parseFloat(live.cash_outflows || 0), movSummary.cashExpensesTotal || 0);
+      const expectedCashFinal = initialFundVal + amountCash + cashInflowsVal - cashOutflowsVal;
 
-      // Conteo de efectivo esperado
       const elExpectedCash = document.getElementById('cutExpectedCash');
-      if (elExpectedCash) elExpectedCash.textContent = `$${expectedCash.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      if (elExpectedCash) elExpectedCash.textContent = `$${expectedCashFinal.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
       if (inputEfectivoContado) {
-        if (!inputEfectivoContado.value || inputEfectivoContado.value === '1,000.00' || inputEfectivoContado.value === '0.00') {
-          inputEfectivoContado.value = expectedCash.toFixed(2);
+        if (!inputEfectivoContado.value || inputEfectivoContado.value === '1,000.00' || inputEfectivoContado.value === '0.00' || inputEfectivoContado.value === expectedCash.toFixed(2)) {
+          inputEfectivoContado.value = expectedCashFinal.toFixed(2);
         }
       }
 
@@ -170,6 +182,17 @@ function initCutCash() {
       const contadoStr = inputEfectivoContado ? inputEfectivoContado.value.replace(/,/g, '').trim() : '0';
       const contadoVal = parseFloat(contadoStr) || 0;
 
+      // Obtener resumen de movimientos en efectivo para el cierre
+      const shiftDataCurrent = await window.PosDataService.getTerminalShift(terminalInfo.code);
+      const shiftCurrent = (shiftDataCurrent && shiftDataCurrent.shift) || {};
+      const startCurrent = shiftCurrent.opened_at ? new Date(shiftCurrent.opened_at) : new Date();
+      const movSummaryCurrent = (typeof window.getShiftCashMovementsSummary === 'function')
+        ? window.getShiftCashMovementsSummary(startCurrent, terminalInfo.code, shiftCurrent.id)
+        : { cashIncomesTotal: 0, cashExpensesTotal: 0 };
+      const liveCurrent = (shiftDataCurrent && shiftDataCurrent.live_totals) || {};
+      const finalCashInflows = Math.max(parseFloat(liveCurrent.cash_inflows || 0), movSummaryCurrent.cashIncomesTotal || 0);
+      const finalCashOutflows = Math.max(parseFloat(liveCurrent.cash_outflows || 0), movSummaryCurrent.cashExpensesTotal || 0);
+
       btnCerrarTurno.disabled = true;
       const originalText = btnCerrarTurno.querySelector('span')?.textContent;
       if (btnCerrarTurno.querySelector('span')) btnCerrarTurno.querySelector('span').textContent = 'Guardando corte en Supabase...';
@@ -177,7 +200,9 @@ function initCutCash() {
       const res = await window.PosDataService.closeTerminalShift(
         terminalInfo.code,
         contadoVal,
-        `Cierre de turno realizado desde ${terminalInfo.name}`
+        `Cierre de turno realizado desde ${terminalInfo.name}`,
+        finalCashInflows,
+        finalCashOutflows
       );
 
       btnCerrarTurno.disabled = false;
@@ -193,6 +218,8 @@ function initCutCash() {
       const totCant = closed.total_sales_count || 0;
       const efecEsp = parseFloat(closed.expected_cash || 0).toFixed(2);
       const efecCont = parseFloat(closed.counted_cash || 0).toFixed(2);
+      const efecIn = parseFloat(closed.cash_inflows || 0).toFixed(2);
+      const efecOut = parseFloat(closed.cash_outflows || 0).toFixed(2);
 
       // Notificar cambio de turno y sincronizar pantallas inmediatamente
       if (typeof window.syncAllPosScreens === 'function') {
@@ -206,13 +233,15 @@ function initCutCash() {
 
       showModal(
         'Turno Cerrado con Éxito',
-        `El corte de ${terminalInfo.name} ha sido guardado PERMANENTEMENTE en Supabase.\n\n` +
+        `El corte de ${terminalInfo.name} ha sido guardado PERMANENTEMENTE en el sistema.\n\n` +
         `• Caja: ${terminalInfo.name} (${terminalInfo.code})\n` +
         `• Ventas totales: $${totVentas} (${totCant} ventas)\n` +
         `  - Efectivo: $${parseFloat(closed.cash_sales || 0).toFixed(2)}\n` +
         `  - Tarjeta: $${parseFloat(closed.card_sales || 0).toFixed(2)}\n` +
         `  - Transferencia/QR: $${parseFloat(closed.transfer_sales || 0).toFixed(2)}\n` +
         `  - Mixto: $${parseFloat(closed.mixed_sales || 0).toFixed(2)}\n` +
+        `• Ingresos en efectivo: + $${efecIn}\n` +
+        `• Egresos en efectivo: - $${efecOut}\n` +
         `• Efectivo esperado: $${efecEsp}\n` +
         `• Efectivo contado: $${efecCont}\n\n` +
         `IMPORTANTE: Las ventas en ${terminalInfo.name} quedan BLOQUEADAS hasta abrir un nuevo turno.`
@@ -236,6 +265,21 @@ function initCutCash() {
       const live = shiftData.live_totals || {};
       const contadoStr = inputEfectivoContado ? inputEfectivoContado.value : '0.00';
 
+      const movSummary = (typeof window.getShiftCashMovementsSummary === 'function')
+        ? window.getShiftCashMovementsSummary(new Date(shift.opened_at), terminalInfo.code, shift.id)
+        : { cashIncomesTotal: 0, cashExpensesTotal: 0, totalIncomesAmount: 0, totalExpensesAmount: 0, totalIncomesCount: 0, totalExpensesCount: 0 };
+
+      const initialFundVal = parseFloat(shift.initial_fund || 1000);
+      const cashInflowsVal = Math.max(parseFloat(live.cash_inflows || 0), movSummary.cashIncomesTotal || 0);
+      const cashOutflowsVal = Math.max(parseFloat(live.cash_outflows || 0), movSummary.cashExpensesTotal || 0);
+      const totalInflowsVal = Math.max(parseFloat(live.total_inflows || 0), movSummary.totalIncomesAmount || 0);
+      const totalOutflowsVal = Math.max(parseFloat(live.total_outflows || 0), movSummary.totalExpensesAmount || 0);
+      const inCount = Math.max(live.inflows_count || 0, movSummary.totalIncomesCount || 0);
+      const outCount = Math.max(live.outflows_count || 0, movSummary.totalExpensesCount || 0);
+
+      const cashSalesVal = parseFloat(live.cash_sales || 0);
+      const expCash = initialFundVal + cashSalesVal + cashInflowsVal - cashOutflowsVal;
+
       showModal(
         'Vista Previa: Comprobante de Corte',
         `========================================\n` +
@@ -246,14 +290,17 @@ function initCutCash() {
         `Fecha: ${formatShortDate(now)} ${formatTime(now)}\n` +
         `Apertura: ${formatShortDate(new Date(shift.opened_at))} ${formatTime(new Date(shift.opened_at))}\n` +
         `----------------------------------------\n` +
-        `Fondo inicial:        $${parseFloat(shift.initial_fund || 1000).toFixed(2)}\n` +
+        `Fondo inicial:        $${initialFundVal.toFixed(2)}\n` +
         `Ventas Totales (${live.total_sales_count || 0}):   $${parseFloat(live.total_sales_amount || 0).toFixed(2)}\n` +
-        `  - Efectivo:         $${parseFloat(live.cash_sales || 0).toFixed(2)}\n` +
+        `  - Efectivo:         $${cashSalesVal.toFixed(2)}\n` +
         `  - Tarjeta:          $${parseFloat(live.card_sales || 0).toFixed(2)}\n` +
         `  - Transferencia/QR: $${parseFloat(live.transfer_sales || 0).toFixed(2)}\n` +
         `  - Pago Mixto:       $${parseFloat(live.mixed_sales || 0).toFixed(2)}\n` +
         `----------------------------------------\n` +
-        `Efectivo esperado:    $${parseFloat(live.expected_cash || 0).toFixed(2)}\n` +
+        `Total Ingresos (${inCount}):     + $${totalInflowsVal.toFixed(2)} (Efectivo: + $${cashInflowsVal.toFixed(2)})\n` +
+        `Total Egresos (${outCount}):      - $${totalOutflowsVal.toFixed(2)} (Efectivo: - $${cashOutflowsVal.toFixed(2)})\n` +
+        `----------------------------------------\n` +
+        `Efectivo esperado:    $${expCash.toFixed(2)}\n` +
         `Efectivo contado:     $${contadoStr}\n` +
         `========================================`
       );

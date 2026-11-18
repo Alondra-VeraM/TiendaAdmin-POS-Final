@@ -17,6 +17,7 @@ const { createClient } = require('@supabase/supabase-js');
 const { testConnection } = require('./database/db');
 const localDb = require('./database/localDb');
 const inventoryController = require('./controllers/inventoryController');
+const createCashMovementsRouter = require('./routes/cashMovements/cashMovementsRoutes');
 
 // Cargar variables de entorno desde .env si existe
 try {
@@ -610,18 +611,7 @@ app.post('/api/pos/shift/close', async (req, res) => {
   }
 });
 
-// 10. Movimientos extraordinarios de efectivo (Entrada / Salida / Proveedor)
-app.post('/api/pos/shift/movement', (req, res) => {
-  try {
-    const user = resolveRequestUser(req);
-    const { terminal_code, movement_type, amount, concept } = req.body || {};
-    const result = localDb.registerCashMovement(terminal_code, movement_type, amount, concept, user);
-    res.json(result);
-  } catch (err) {
-    const status = err instanceof localDb.PosError ? err.status : 500;
-    res.status(status).json({ ok: false, error: err.message, errorCode: err.code });
-  }
-});
+// 10. Movimientos de Caja delegados a routes/cashMovements/cashMovementsRoutes.js
 
 // 11. Lista de cajeros registrados
 app.get('/api/pos/cashiers', (req, res) => {
@@ -793,6 +783,9 @@ app.get('/api/pos/shrinkage', (req, res) => {
 app.get('/api/pos/version', (req, res) => {
   res.json({ ok: true, version: localDb.getDataVersion() });
 });
+
+// 27. Módulo de Movimientos de Caja (Ingresos y Egresos) - Responsabilidad separada
+app.use('/api/pos', createCashMovementsRouter({ localDb, supabase, resolveRequestUser }));
 
 // ==============================================================================
 // TAREAS AUTOMÁTICAS: RESPALDO PERIÓDICO A SUPABASE (PLAN FREE: CADA 15 MIN)
