@@ -17,6 +17,7 @@ const { createClient } = require('@supabase/supabase-js');
 const { testConnection } = require('./database/db');
 const localDb = require('./database/localDb');
 const inventoryController = require('./controllers/inventoryController');
+const createCashMovementsRouter = require('./routes/cashMovements/cashMovementsRoutes');
 
 // Cargar variables de entorno desde .env si existe
 try {
@@ -56,6 +57,13 @@ try {
   console.warn('⚠️ No se pudo inicializar Supabase en backend:', e.message);
 }
 
+// Sincronización inicial bidireccional (Supabase -> SQLite local y catálogo base si está vacío)
+localDb.syncStartup(supabase).then((r) => {
+  console.log('[DB SYNC INICIAL]', JSON.stringify(r));
+}).catch((err) => {
+  console.warn('[DB SYNC INICIAL] Advertencia:', err.message);
+});
+
 // Middlewares
 app.use(express.json({ limit: '15mb' }));
 app.use(express.text({ type: ['text/xml', 'application/xml'], limit: '15mb' }));
@@ -64,11 +72,11 @@ app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 // Servir frontend estático desde www (sin interceptar index.html en raíz)
 app.use(express.static(path.join(__dirname, 'www'), { index: false }));
 
-// CORS para pruebas locales
+// CORS para pruebas locales y Electron (capacitor-electron://localhost)
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
@@ -610,18 +618,7 @@ app.post('/api/pos/shift/close', async (req, res) => {
   }
 });
 
-// 10. Movimientos extraordinarios de efectivo (Entrada / Salida / Proveedor)
-app.post('/api/pos/shift/movement', (req, res) => {
-  try {
-    const user = resolveRequestUser(req);
-    const { terminal_code, movement_type, amount, concept } = req.body || {};
-    const result = localDb.registerCashMovement(terminal_code, movement_type, amount, concept, user);
-    res.json(result);
-  } catch (err) {
-    const status = err instanceof localDb.PosError ? err.status : 500;
-    res.status(status).json({ ok: false, error: err.message, errorCode: err.code });
-  }
-});
+// 10. Movimientos de Caja delegados a routes/cashMovements/cashMovementsRoutes.js
 
 // 11. Lista de cajeros registrados
 app.get('/api/pos/cashiers', (req, res) => {
@@ -792,6 +789,44 @@ app.get('/api/pos/shrinkage', (req, res) => {
 // 26. Versión de datos para sincronización reactiva en tiempo real (C1 y C2)
 app.get('/api/pos/version', (req, res) => {
   res.json({ ok: true, version: localDb.getDataVersion() });
+});
+
+// 27. Módulo de Movimientos de Caja (Ingresos y Egresos) - Responsabilidad separada
+app.use('/api/pos', createCashMovementsRouter({ localDb, supabase, resolveRequestUser }));
+
+// 28. Impresión directa de ticket térmico desde navegador hacia impresora POS-58 en Windows
+app.post('/api/pos/print-ticket', async (req, res) => {
+  try {
+    const candidates = [
+      path.join(__dirname, 'electron/modules/printer.js'),
+      path.join(__dirname, '../electron/modules/printer.js'),
+      path.join(__dirname, '../../modules/printer.js')
+    ];
+    const printerPath = candidates.find(p => fs.existsSync(p));
+    if (!printerPath) {
+      return res.status(404).json({ ok: false, error: 'Módulo de impresora no disponible.' });
+    }
+    const { printTicketDirectWindows } = require(printerPath);
+    const result = await printTicketDirectWindows(req.body || {});
+    if (result && result.ok) {
+      return res.json(result);
+    }
+    return res.status(404).json(result || { ok: false, reason: 'NO_THERMAL_PRINTER' });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// 29. Sincronización bidireccional completa bajo demanda (Nube <-> SQLite local)
+app.post('/api/pos/sync-cloud', async (req, res) => {
+  try {
+    const pull = await localDb.pullFromCloudSync(supabase);
+    const seed = localDb.ensureStarterCatalog();
+    const push = supabase ? await localDb.performCloudBackup(supabase) : { ok: false };
+    res.json({ ok: true, pull, seed, push });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 // ==============================================================================

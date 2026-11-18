@@ -15,21 +15,49 @@ window.ENV_CONFIG = {
   DEFAULT_ADMIN_PIN: '1234'
 };
 
+// Determinar URL del Backend Local (en Electron/Capacitor apunta al servidor local puerto 3000)
+if (typeof window !== 'undefined' && !window.BACKEND_API_URL) {
+  const proto = window.location ? window.location.protocol : '';
+  const host = window.location ? window.location.hostname : '';
+  const port = window.location ? window.location.port : '';
+  if (proto === 'file:' || proto === 'capacitor-electron:' || proto === 'capacitor:' || (host === 'localhost' && port !== '3000')) {
+    window.BACKEND_API_URL = 'http://localhost:3000';
+  } else {
+    window.BACKEND_API_URL = '';
+  }
+}
+
 // Cargar configuración desde el servidor local (/api/config lee de .env sin exponer claves en el repositorio)
 if (typeof window !== 'undefined' && typeof fetch === 'function') {
-  fetch('/api/config')
-    .then(r => r.ok ? r.json() : null)
-    .then(cfg => {
-      if (cfg && cfg.supabaseUrl && cfg.supabaseAnonKey) {
-        window.ENV_CONFIG.SUPABASE_URL = cfg.supabaseUrl;
-        window.ENV_CONFIG.SUPABASE_ANON_KEY = cfg.supabaseAnonKey;
-        try {
-          localStorage.setItem('POS_SUPABASE_URL', cfg.supabaseUrl);
-          localStorage.setItem('POS_SUPABASE_ANON_KEY', cfg.supabaseAnonKey);
-        } catch (e) {}
-      }
-    })
-    .catch(() => {});
+  const loadBackendConfig = (attempt = 0) => {
+    fetch(`${window.BACKEND_API_URL || ''}/api/config`)
+      .then(r => r.ok ? r.json() : null)
+      .then(cfg => {
+        if (cfg && cfg.supabaseUrl && cfg.supabaseAnonKey) {
+          window.ENV_CONFIG.SUPABASE_URL = cfg.supabaseUrl;
+          window.ENV_CONFIG.SUPABASE_ANON_KEY = cfg.supabaseAnonKey;
+          try {
+            localStorage.setItem('POS_SUPABASE_URL', cfg.supabaseUrl);
+            localStorage.setItem('POS_SUPABASE_ANON_KEY', cfg.supabaseAnonKey);
+          } catch (e) {}
+          if (typeof window.initSupabaseClient === 'function') {
+            window.initSupabaseClient();
+          }
+          if (typeof window.refreshInventoryFromSupabase === 'function') {
+            window.refreshInventoryFromSupabase();
+          }
+          if (typeof window.refreshSalesFromSupabase === 'function') {
+            window.refreshSalesFromSupabase();
+          }
+        }
+      })
+      .catch(() => {
+        if (attempt < 5) {
+          setTimeout(() => loadBackendConfig(attempt + 1), 800);
+        }
+      });
+  };
+  loadBackendConfig(0);
 }
 
 // Obtener terminal activa de forma persistente (C1 o C2)

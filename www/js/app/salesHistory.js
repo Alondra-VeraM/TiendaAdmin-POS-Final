@@ -110,8 +110,11 @@ function initSalesHistory() {
     }
   }
 
+  let currentViewingTicket = null;
+
   function openTicketModal(ticket) {
     if (!ticket) return;
+    currentViewingTicket = ticket;
     if (ticketModalFolio) ticketModalFolio.textContent = ticket.folio ? `Ticket ${ticket.folio}` : 'Ticket de Compra';
     if (ticketModalDate) {
       if (ticket.created_at) {
@@ -463,8 +466,14 @@ function initSalesHistory() {
   }
 
   if (btnPrintTicketModal) {
-    btnPrintTicketModal.addEventListener('click', () => {
-      window.print();
+    btnPrintTicketModal.addEventListener('click', async () => {
+      if (modalTicketDetail) modalTicketDetail.style.display = 'none';
+      if (typeof window.printTicket === 'function') {
+        await window.printTicket(currentViewingTicket);
+      } else {
+        console.warn('[salesHistory] window.printTicket no disponible. Verificar que printTicket.js esté cargado antes que salesHistory.js.');
+        window.print();
+      }
     });
   }
 

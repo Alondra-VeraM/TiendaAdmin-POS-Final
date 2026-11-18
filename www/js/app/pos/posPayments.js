@@ -123,7 +123,9 @@ function initPosPayments() {
     const terminalInfo = (typeof window !== 'undefined' && typeof window.getActiveTerminal === 'function')
       ? window.getActiveTerminal()
       : { code: 'C1', name: 'Caja 1' };
-    const cashierName = (window.currentSessionUser && window.currentSessionUser.name) || 'Elena R.';
+    const cashierUser = window.currentSessionUser || (typeof safeGetStorage === 'function' ? JSON.parse(safeGetStorage('pos_current_session_user') || 'null') : null);
+    const cashierName = cashierUser ? (cashierUser.name || cashierUser.fullName || 'Cajero') : 'Cajero';
+    const cashierRole = cashierUser ? (cashierUser.role || '') : '';
 
     // Métodos de pago
     let cashAmount = 0;
@@ -195,21 +197,50 @@ function initPosPayments() {
     try {
       res = await window.PosDataService.registerSale(salePayload, state.cart);
     } catch (checkoutErr) {
-      console.warn('[COBRO LOCAL FALLBACK]:', checkoutErr);
-      res = { success: true, result: { ok: true, sale_id: Date.now() }, fallback: true };
+      console.error('[COBRO ERROR]:', checkoutErr);
+      res = {
+        success: false,
+        error: 'Error inesperado durante el cobro: ' + (checkoutErr.message || checkoutErr),
+        errorCode: 'CHECKOUT_EXCEPTION'
+      };
     }
 
     isCheckoutInProgress = false;
     if (btnCheckout) btnCheckout.disabled = false;
-    if (checkoutText) checkoutText.textContent = `Cobrar $0.00`;
 
-    // Si hubo un rechazo explícito por stock insuficiente
-    if (res && res.success === false && res.errorCode === 'INSUFFICIENT_STOCK') {
-      showModal('Inventario Insuficiente', `${res.error || 'No hay suficientes existencias.'}\n\nSe ha actualizado el inventario.`);
-      if (typeof window.refreshInventoryFromSupabase === 'function') window.refreshInventoryFromSupabase();
+    // VALIDACIÓN ESTRICTA DE ERRORES: Si falló el guardado, NUNCA continuar a Venta Exitosa
+    if (!res || res.success === false) {
       if (checkoutText) checkoutText.textContent = `Cobrar $${totals.totalNet.toFixed(2)}`;
+
+      const errCode = res?.errorCode || 'SALE_ERROR';
+      const errMsg = res?.error || 'Ocurrió un error desconocido al registrar la venta.';
+
+      if (errCode === 'INSUFFICIENT_STOCK') {
+        showModal('Inventario Insuficiente', `${errMsg}\n\nSe ha actualizado el inventario.`);
+        if (typeof window.refreshInventoryFromSupabase === 'function') window.refreshInventoryFromSupabase();
+      } else if (errCode === 'SHIFT_CLOSED' || errCode === 'NO_ACTIVE_SHIFT') {
+        showModal('Turno Cerrado', `${errMsg}\n\nPor favor abre un turno antes de cobrar.`);
+      } else if (errCode === 'DUPLICATE_FOLIO') {
+        showModal('Folio Duplicado', `${errMsg}\n\nGenerando un nuevo folio para reintentar.`);
+        state.folio = (typeof window.generateUniqueFolio === 'function')
+          ? window.generateUniqueFolio(terminalInfo.code)
+          : `#TK-${terminalInfo.code}-${Date.now()}`;
+      } else if (errCode === 'PRICE_CHANGED') {
+        showModal('Cambio de Precio', `${errMsg}\n\nLos precios del catálogo han cambiado.`);
+        if (typeof window.refreshInventoryFromSupabase === 'function') window.refreshInventoryFromSupabase();
+      } else if (errCode === 'INSUFFICIENT_PAYMENT') {
+        showModal('Pago Insuficiente', `${errMsg}`);
+      } else if (errCode === 'INVALID_INPUT') {
+        showModal('Datos Inválidos', `${errMsg}`);
+      } else if (errCode === 'STORAGE_FAILED') {
+        showModal('Error de Almacenamiento', `No se pudo registrar la venta ni guardarla localmente:\n\n${errMsg}`);
+      } else {
+        showModal('Error al Registrar Venta', `No se pudo procesar la venta.\n\nDetalle: ${errMsg}`);
+      }
       return;
     }
+
+    if (checkoutText) checkoutText.textContent = `Cobrar $0.00`;
 
     // VENTA EXITOSA
     const now = new Date();
@@ -221,6 +252,8 @@ function initPosPayments() {
       unitPrice: c.unitPrice || c.price || 0,
       total: (c.unitPrice || c.price || 0) * (c.quantity || 1)
     }));
+    const receivedVal = state.selectedPaymentMethod === 'cash' ? (parseFloat(cashReceivedInput?.value) || totals.totalNet) : totals.totalNet;
+    const changeVal = state.selectedPaymentMethod === 'cash' ? Math.max(0, receivedVal - totals.totalNet) : 0;
     const itemsDetailStr = cartSnapshot.map(it => `${it.name} x${it.quantity}`).join(', ');
 
     const newHistoryEntry = {
@@ -231,11 +264,14 @@ function initPosPayments() {
       cajaCode: terminalInfo.code,
       cajaName: terminalInfo.name,
       cashier: cashierName,
+      role: cashierRole,
       itemsCount: totals.totalPieces,
       itemsSummary: `${totals.totalPieces} producto${totals.totalPieces > 1 ? 's' : ''}`,
       itemsDetail: itemsDetailStr,
       items: cartSnapshot,
       paymentMethod: state.selectedPaymentMethod,
+      amountReceived: receivedVal,
+      change: changeVal,
       cashAmount,
       cardAmount,
       transferAmount,
@@ -359,126 +395,13 @@ function initPosPayments() {
   }
 
   // ---------------------------------------------------------------------------
-  // IMPRESIÓN DIRECTA DE TICKET TÉRMICO (80mm / 58mm)
+  // IMPRESIÓN DIRECTA DE TICKET TÉRMICO (Separada en www/js/app/printTicket.js)
   // ---------------------------------------------------------------------------
   function printTicketDirectly(ticket) {
-    if (!ticket) return;
-
-    const printFrame = document.createElement('iframe');
-    printFrame.style.position = 'fixed';
-    printFrame.style.right = '0';
-    printFrame.style.bottom = '0';
-    printFrame.style.width = '0';
-    printFrame.style.height = '0';
-    printFrame.style.border = '0';
-    document.body.appendChild(printFrame);
-
-    const doc = printFrame.contentWindow.document;
-    const items = Array.isArray(ticket.items) ? ticket.items : [];
-    const dateStr = ticket.created_at ? new Date(ticket.created_at).toLocaleString('es-MX') : new Date().toLocaleString('es-MX');
-
-    const methodNames = {
-      cash: 'Efectivo',
-      card: 'Tarjeta',
-      transfer: 'Transferencia',
-      mixed: 'Mixto'
-    };
-    const payMethodName = methodNames[ticket.paymentMethod] || 'Efectivo';
-
-    doc.open();
-    doc.write(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="utf-8">
-        <title>Ticket ${ticket.folio}</title>
-        <style>
-          @page { size: 80mm auto; margin: 2mm; }
-          body {
-            font-family: 'Courier New', Courier, monospace;
-            font-size: 12px;
-            color: #000000;
-            margin: 0;
-            padding: 4px;
-            width: 72mm;
-            line-height: 1.35;
-          }
-          .text-center { text-align: center; }
-          .text-right { text-align: right; }
-          .bold { font-weight: bold; }
-          .divider { border-top: 1px dashed #000000; margin: 5px 0; }
-          .header h2 { margin: 0; font-size: 16px; font-weight: bold; }
-          .header p { margin: 2px 0; font-size: 11px; }
-          .item-row { display: flex; justify-content: space-between; margin: 3px 0; font-size: 11px; }
-          .item-desc { flex: 1; margin-right: 4px; }
-          .totals-row { display: flex; justify-content: space-between; margin: 3px 0; font-size: 12px; }
-          .total-big { font-size: 16px; font-weight: bold; margin: 6px 0; }
-          .footer { font-size: 10px; margin-top: 8px; }
-        </style>
-      </head>
-      <body>
-        <div class="header text-center">
-          <h2>TIENDA ABARROTES NEXUS</h2>
-          <p class="bold">COMPROBANTE DE VENTA</p>
-          <div class="divider"></div>
-          <p class="bold">FOLIO: ${ticket.folio || 'S/F'}</p>
-          <p>FECHA: ${dateStr}</p>
-          <p>${ticket.cajaName || ticket.cajaCode || 'Caja 1'} | Cajero: ${ticket.cashier || 'Cajero'}</p>
-        </div>
-        <div class="divider"></div>
-        <div>
-          ${items.map(it => `
-            <div class="item-row">
-              <span class="item-desc">${it.quantity || 1}x ${it.name || 'Artículo'}</span>
-              <span class="text-right">$${((it.unitPrice || it.price || 0) * (it.quantity || 1)).toFixed(2)}</span>
-            </div>
-          `).join('')}
-        </div>
-        <div class="divider"></div>
-        <div class="totals-row">
-          <span>Artículos:</span>
-          <span>${ticket.itemsCount || items.length} pzas</span>
-        </div>
-        <div class="totals-row total-big">
-          <span>TOTAL:</span>
-          <span>$${parseFloat(ticket.total || 0).toFixed(2)}</span>
-        </div>
-        <div class="totals-row">
-          <span>Método de Pago:</span>
-          <span>${payMethodName}</span>
-        </div>
-        ${ticket.cashReceived != null ? `
-        <div class="totals-row">
-          <span>Efectivo Recibido:</span>
-          <span>$${parseFloat(ticket.cashReceived).toFixed(2)}</span>
-        </div>
-        <div class="totals-row">
-          <span>Cambio:</span>
-          <span>$${parseFloat(ticket.cashChange || 0).toFixed(2)}</span>
-        </div>` : ''}
-        <div class="divider"></div>
-        <div class="footer text-center">
-          <p class="bold">¡GRACIAS POR SU PREFERENCIA!</p>
-          <p>Conserve este comprobante</p>
-        </div>
-      </body>
-      </html>
-    `);
-    doc.close();
-
-    printFrame.contentWindow.focus();
-    setTimeout(() => {
-      try {
-        printFrame.contentWindow.print();
-      } catch (e) {
-        console.warn('Error imprimiendo ticket:', e);
-      }
-      setTimeout(() => {
-        if (printFrame && printFrame.parentNode) {
-          printFrame.parentNode.removeChild(printFrame);
-        }
-      }, 1500);
-    }, 250);
+    if (typeof window.printTicket === 'function') {
+      return window.printTicket(ticket);
+    }
+    console.warn('[posPayments] window.printTicket no disponible.');
   }
 
   // Enlazar click del botón de cobrar

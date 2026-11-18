@@ -1552,14 +1552,56 @@ body {
   transform: translateX(2px);
 }
 
-/* Total Net Box */
-.total-net-card {
+/* Tarjeta Unificada de Resumen y Total Neto */
+.settlement-summary-unified {
   background-color: #f8fafc;
   border: 1px solid #e2e8f0;
   border-radius: var(--radius-md);
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+
+/* Cart Totals Breakdown (Subtotal, Descuentos, IVA) */
+.pos-cart-totals-breakdown {
+  background-color: #ffffff;
+  border-bottom: 1px dashed #e2e8f0;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 13px;
+}
+.totals-breakdown-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #64748b;
+  line-height: 1.3;
+}
+.totals-breakdown-label {
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+}
+.totals-breakdown-val {
+  font-weight: 600;
+  color: #1e293b;
+}
+.totals-breakdown-row.discount-row {
+  color: #16a34a;
+}
+.discount-green {
+  color: #16a34a !important;
+  font-weight: 700 !important;
+}
+
+/* Total Net Box (integrado dentro de la tarjeta única) */
+.total-net-card {
+  background-color: transparent;
+  border: none;
   padding: 12px 16px;
   text-align: center;
-  margin-bottom: 12px;
+  margin-bottom: 0;
 }
 
 .total-net-label {
@@ -1592,13 +1634,13 @@ body {
   background-color: var(--green-primary);
   border: none;
   border-radius: var(--radius-md);
-  padding: 12px 18px;
+  padding: 13px 18px;
   color: #ffffff;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
   box-shadow: 0 4px 12px rgba(21, 128, 61, 0.28);
   transition: all 0.15s ease;
 }
@@ -1636,7 +1678,7 @@ body {
   letter-spacing: 0.3px;
 }
 
-/* Payment Methods */
+/* Payment Methods (Grid simétrico 2x2) */
 .payment-method-section {
   margin-bottom: 12px;
 }
@@ -1647,11 +1689,12 @@ body {
   letter-spacing: 0.6px;
   color: #64748b;
   margin-bottom: 8px;
+  text-transform: uppercase;
 }
 
 .payment-buttons-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 8px;
 }
 
@@ -1659,11 +1702,12 @@ body {
   background-color: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: var(--radius-md);
-  padding: 10px 6px;
+  padding: 10px 10px;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  gap: 8px;
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -1681,28 +1725,35 @@ body {
 }
 
 .payment-icon-wrap {
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
 }
 
 .payment-icon-wrap svg {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
 }
 
 .symbol-currency {
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 700;
   line-height: 1;
 }
 
 .payment-label {
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.services-panel-bottom {
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid #f1f5f9;
 }
 
 /* Cash note hint */
@@ -5150,6 +5201,229 @@ body.role-cajero .admin-only-nav,
 
 .btn-suspended-sales-badge:hover {
   background: #fde68a;
+}
+
+/* ==========================================================================
+   MÓDULO: INGRESOS Y EGRESOS ADICIONALES (CASH MOVEMENTS)
+   ========================================================================== */
+.cash-movements-view-container {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.movements-card {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  background-color: var(--bg-card, #ffffff);
+  border-radius: var(--radius-xl, 14px);
+  box-shadow: var(--shadow-card, 0 1px 3px rgba(0, 0, 0, 0.05));
+  padding: 26px 30px;
+  overflow: hidden;
+  min-width: 0;
+  height: 100%;
+}
+
+.movements-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #f1f5f9;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.movements-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.movements-title {
+  font-size: 24px;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.4px;
+  margin: 0;
+  line-height: 1.2;
+}
+
+.movements-sub {
+  font-size: 13.5px;
+  color: #64748b;
+  margin: 0;
+}
+
+.movements-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.btn-mov-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-mov-primary {
+  background-color: #00966d;
+  color: #ffffff;
+}
+
+.btn-mov-primary:hover {
+  background-color: #007c5a;
+}
+
+.btn-mov-income {
+  background-color: #10b981;
+  color: #ffffff;
+}
+
+.btn-mov-income:hover {
+  background-color: #059669;
+}
+
+.btn-mov-expense {
+  background-color: #ef4444;
+  color: #ffffff;
+}
+
+.btn-mov-expense:hover {
+  background-color: #dc2626;
+}
+
+.btn-clean-export {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-clean-export:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+.movements-notice-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background-color: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-size: 12.5px;
+  color: #0369a1;
+  line-height: 1.45;
+}
+
+.movements-notice-banner svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.movements-kpis-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+
+.badge-mov-type {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.badge-mov-income {
+  background-color: #dcfce7;
+  color: #15803d;
+}
+
+.badge-mov-expense {
+  background-color: #fee2e2;
+  color: #b91c1c;
+}
+
+.badge-category-pill {
+  display: inline-block;
+  background-color: #f1f5f9;
+  color: #475569;
+  padding: 3px 10px;
+  border-radius: 14px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mov-type-selector {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.mov-type-option {
+  cursor: pointer;
+  display: block;
+}
+
+.mov-type-option input[type="radio"] {
+  display: none;
+}
+
+.mov-type-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px;
+  border: 2px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #64748b;
+  background: #f8fafc;
+  transition: all 0.15s ease;
+}
+
+.mov-type-income input:checked + .mov-type-btn {
+  border-color: #10b981;
+  background-color: #ecfdf5;
+  color: #047857;
+}
+
+.mov-type-expense input:checked + .mov-type-btn {
+  border-color: #ef4444;
+  background-color: #fef2f2;
+  color: #b91c1c;
 }
 
 /* ==========================================================================

@@ -118,4 +118,5 @@ console.log('✓ 3. KPIs de Historial de Ventas calculados exactamente: 2 ticket
 console.log('\n================================================================');
 console.log('RESULTADO: TEST DE PERSISTENCIA DE VENTAS SUPERADO AL 100%');
 console.log('================================================================');
+process.exit(0);
 

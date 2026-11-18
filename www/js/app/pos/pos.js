@@ -90,6 +90,11 @@ function initPos() {
     }
   }
 
+  const escapeHtml = window.escapeHtml || function(str) {
+    if (str === null || str === undefined) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  };
+
   function calculateTotals() {
     let subtotalAccumulated = 0;
     let totalDiscount = 0;
@@ -100,13 +105,30 @@ function initPos() {
       const rawItemSubtotal = item.unitPrice * item.quantity;
       subtotalAccumulated += rawItemSubtotal;
 
-      if (item.promoRule && item.promoRule.type === 'bundle') {
-        const bundles = Math.floor(item.quantity / item.promoRule.quantity);
-        if (bundles > 0) {
-          const normalCostForBundles = bundles * item.promoRule.quantity * item.unitPrice;
-          const promoCostForBundles = bundles * item.promoRule.bundle_price;
-          const discount = normalCostForBundles - promoCostForBundles;
-          totalDiscount += discount;
+      let rule = item.promoRule;
+      if (typeof rule === 'string' && rule.trim().startsWith('{')) {
+        try { rule = JSON.parse(rule); } catch (e) { rule = null; }
+      }
+
+      if (rule) {
+        const pType = rule.type || (rule.discount_percent != null || rule.percentage != null ? 'percentage' : (rule.bundle_price != null ? 'bundle' : null));
+        if (pType === 'bundle' && rule.quantity >= 2 && rule.bundle_price != null) {
+          const bundles = Math.floor(item.quantity / rule.quantity);
+          if (bundles > 0) {
+            const normalCostForBundles = bundles * rule.quantity * item.unitPrice;
+            const promoCostForBundles = bundles * rule.bundle_price;
+            // Solo aplicar si la promo descuenta (nunca cobrar más que el precio normal)
+            if (promoCostForBundles < normalCostForBundles) {
+              const discount = normalCostForBundles - promoCostForBundles;
+              totalDiscount += discount;
+            }
+          }
+        } else if (pType === 'percentage' || pType === 'percent') {
+          const pct = parseFloat(rule.discount_percent ?? rule.percentage ?? 0);
+          if (pct > 0 && pct <= 100) {
+            const discount = (rawItemSubtotal * pct) / 100;
+            totalDiscount += discount;
+          }
         }
       }
     });
@@ -152,22 +174,48 @@ function initPos() {
       const rawSubtotal = (item.unitPrice || 0) * (item.quantity || 1);
       let finalItemSubtotal = rawSubtotal;
       let hasPromoApplied = false;
+      let promoBadgeText = '';
 
-      if (item.promoRule && item.promoRule.type === 'bundle') {
-        const bundles = Math.floor(item.quantity / item.promoRule.quantity);
-        if (bundles > 0) {
-          hasPromoApplied = true;
-          const remaining = item.quantity % item.promoRule.quantity;
-          finalItemSubtotal = (bundles * item.promoRule.bundle_price) + (remaining * item.unitPrice);
+      let rule = item.promoRule;
+      if (typeof rule === 'string' && rule.trim().startsWith('{')) {
+        try { rule = JSON.parse(rule); } catch (e) { rule = null; }
+      }
+
+      if (rule) {
+        const pType = rule.type || (rule.discount_percent != null || rule.percentage != null ? 'percentage' : (rule.bundle_price != null ? 'bundle' : null));
+        if (pType === 'bundle' && rule.quantity >= 2 && rule.bundle_price != null) {
+          const bundles = Math.floor(item.quantity / rule.quantity);
+          if (bundles > 0) {
+            const normalCostForBundles = bundles * rule.quantity * item.unitPrice;
+            const promoCostForBundles = bundles * rule.bundle_price;
+            // Solo aplicar promo si es más barata que el precio normal
+            if (promoCostForBundles < normalCostForBundles) {
+              hasPromoApplied = true;
+              promoBadgeText = rule.badge_text || `${rule.quantity}x$${rule.bundle_price}`;
+              const remaining = item.quantity % rule.quantity;
+              finalItemSubtotal = promoCostForBundles + (remaining * item.unitPrice);
+            }
+          }
+        } else if (pType === 'percentage' || pType === 'percent') {
+          const pct = parseFloat(rule.discount_percent ?? rule.percentage ?? 0);
+          if (pct > 0 && pct <= 100) {
+            hasPromoApplied = true;
+            promoBadgeText = rule.badge_text || `-${pct}%`;
+            finalItemSubtotal = Math.max(0, rawSubtotal - ((rawSubtotal * pct) / 100));
+          }
         }
       }
+
+      const safeTitle = escapeHtml(item.name || '');
+      const safeDisplay = escapeHtml(item.displayName || item.name || '');
+      const safeBadge = escapeHtml(promoBadgeText);
 
       row.innerHTML = `
         <div class="item-icon-box">
           ${getProductIconSvg(item.iconType)}
         </div>
         <div class="item-details">
-          <div class="item-title" title="${item.name}">${item.displayName || item.name}</div>
+          <div class="item-title" title="${safeTitle}">${safeDisplay}</div>
           <div class="item-subtitle-row">
             <span class="item-meta">$${item.unitPrice.toFixed(2)} c/u</span>
             ${hasPromoApplied ? `
@@ -175,7 +223,7 @@ function initPos() {
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path>
                 </svg>
-                ${item.promoRule.badge_text}
+                ${safeBadge}
               </span>
             ` : ''}
           </div>
@@ -211,7 +259,7 @@ function initPos() {
     if (state.ticketNote) {
       const noteRow = document.createElement('div');
       noteRow.style.cssText = 'padding: 8px 12px; background: #eff6ff; border: 1px dashed #93c5fd; border-radius: 8px; font-size: 12px; color: #1e40af; display: flex; align-items: center; justify-content: space-between; margin-top: 8px; margin-bottom: 8px;';
-      noteRow.innerHTML = `<span><strong>Nota:</strong> ${state.ticketNote}</span><button type="button" style="background:none;border:none;color:#ef4444;font-size:16px;cursor:pointer;" title="Eliminar nota">&times;</button>`;
+      noteRow.innerHTML = `<span><strong>Nota:</strong> ${escapeHtml(state.ticketNote)}</span><button type="button" style="background:none;border:none;color:#ef4444;font-size:16px;cursor:pointer;" title="Eliminar nota">&times;</button>`;
       noteRow.querySelector('button').addEventListener('click', () => {
         state.ticketNote = '';
         renderCart();
@@ -219,10 +267,14 @@ function initPos() {
       cartItemsList.appendChild(noteRow);
     }
     if (summarySubtotal) {
-      summarySubtotal.textContent = `${totals.subtotalAccumulated.toFixed(2)}`;
+      summarySubtotal.textContent = `$${totals.subtotalAccumulated.toFixed(2)}`;
     }
+    const discountsRow = document.getElementById('summaryDiscountsRow');
     if (summaryDiscounts) {
       summaryDiscounts.textContent = `-${totals.totalDiscount > 0 ? '$' + totals.totalDiscount.toFixed(2) : '$0.00'}`;
+      if (discountsRow) {
+        discountsRow.style.display = totals.totalDiscount > 0 ? 'flex' : 'none';
+      }
     }
     if (summaryTax) {
       summaryTax.textContent = `$${totals.taxIncluded.toFixed(2)}`;
@@ -426,6 +478,10 @@ function initPos() {
     if (existing) {
       existing.quantity += qty;
     } else {
+      let rule = product.promoRule || product.promo_rule || null;
+      if (typeof rule === 'string' && rule.trim().startsWith('{')) {
+        try { rule = JSON.parse(rule); } catch (e) { rule = null; }
+      }
       state.cart.push({
         id: product.id || Date.now(),
         sku: product.sku || product.barcode || '',
@@ -435,7 +491,7 @@ function initPos() {
         unitPrice: parseFloat(product.price || product.unitPrice || product.unit_price || 0),
         quantity: qty,
         iconType: product.iconType || product.icon_type || 'bread',
-        promoRule: product.promoRule || product.promo_rule || null
+        promoRule: rule
       });
     }
     renderCart();
@@ -688,8 +744,8 @@ function initPos() {
       div.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;';
       div.innerHTML = `
         <div>
-          <div style="font-weight:700;color:#0f172a;font-size:14px;">${s.folio} · <span style="color:#2563eb;">${s.total.toFixed(2)}</span></div>
-          <div style="font-size:12px;color:#64748b;">${s.time} · ${s.itemsCount} piezas ${s.note ? '• ' + s.note : ''}</div>
+          <div style="font-weight:700;color:#0f172a;font-size:14px;">${escapeHtml(s.folio)} · <span style="color:#2563eb;">$${s.total.toFixed(2)}</span></div>
+          <div style="font-size:12px;color:#64748b;">${escapeHtml(s.time)} · ${s.itemsCount} piezas ${s.note ? '• ' + escapeHtml(s.note) : ''}</div>
         </div>
         <button type="button" class="btn-inv btn-inv-primary" style="padding:6px 14px;font-size:12.5px;" data-idx="${idx}">Reanudar</button>
       `;

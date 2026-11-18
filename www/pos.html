@@ -365,6 +365,15 @@
               </a>
             </li>
             <li class="admin-only-nav">
+              <a href="javascript:void(0)" class="nav-link" id="navCashMovementsBtn" data-view="cash-movements" onclick="window.switchView('cash-movements'); return false;">
+                <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="12" y1="1" x2="12" y2="23"></line>
+                  <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                </svg>
+                <span>Ingresos y Egresos</span>
+              </a>
+            </li>
+            <li class="admin-only-nav">
               <a href="javascript:void(0)" class="nav-link" id="navReportsBtn" data-view="reports" onclick="window.switchView('reports'); return false;">
                 <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M18 20V10"></path>
@@ -464,11 +473,139 @@
           </section>
         </main>
 
-        <!-- 2.2 RIGHT PANEL -->
+        <!-- 2.2 RIGHT PANEL (Flujo intuitivo de cobro: Totales -> Método de Pago -> Cobrar -> Servicios) -->
         <aside class="panel-right">
           <div class="card settlement-card">
-            <!-- Servicios Varios (Botón desplegable y lista de servicios) -->
-            <div class="services-panel-section">
+            <!-- 1. Tarjeta Única de Resumen y Total Neto -->
+            <div class="settlement-summary-unified">
+              <div class="pos-cart-totals-breakdown" id="posCartTotalsBreakdown">
+                <div class="totals-breakdown-row">
+                  <span class="totals-breakdown-label">Subtotal:</span>
+                  <span class="totals-breakdown-val" id="summarySubtotal">$0.00</span>
+                </div>
+                <div class="totals-breakdown-row discount-row" id="summaryDiscountsRow" style="display: none;">
+                  <span class="totals-breakdown-label discount-label">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;margin-right:4px;vertical-align:-1px;">
+                      <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path>
+                    </svg>
+                    Descuento promo:
+                  </span>
+                  <span class="totals-breakdown-val discount-val discount-green" id="summaryDiscounts">-$0.00</span>
+                </div>
+                <div class="totals-breakdown-row tax-row">
+                  <span class="totals-breakdown-label">IVA (16% incl.):</span>
+                  <span class="totals-breakdown-val" id="summaryTax">$0.00</span>
+                </div>
+              </div>
+
+              <div class="total-net-card">
+                <span class="total-net-label">TOTAL NETO A COBRAR</span>
+                <div class="total-net-amount" id="summaryTotalNet">$0.00</div>
+              </div>
+            </div>
+
+            <!-- 2. Método de Pago Simétrico (Grid 2x2 sin botones huérfanos) -->
+            <div class="payment-method-section">
+              <h4 class="payment-section-title">MÉTODO DE PAGO</h4>
+              <div class="payment-buttons-grid">
+                <button class="payment-btn active" data-method="cash" id="payMethodCash">
+                  <div class="payment-icon-wrap">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+                      <circle cx="12" cy="12" r="2"></circle>
+                      <path d="M6 12h.01M18 12h.01"></path>
+                    </svg>
+                  </div>
+                  <span class="payment-label">Efectivo</span>
+                </button>
+
+                <button class="payment-btn" data-method="card" id="payMethodCard">
+                  <div class="payment-icon-wrap">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
+                      <line x1="1" y1="10" x2="23" y2="10"></line>
+                    </svg>
+                  </div>
+                  <span class="payment-label">Tarjeta TPV</span>
+                </button>
+
+                <button class="payment-btn" data-method="transfer" id="payMethodTransfer">
+                  <div class="payment-icon-wrap">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="3" y="3" width="7" height="7"></rect>
+                      <rect x="14" y="3" width="7" height="7"></rect>
+                      <rect x="14" y="14" width="7" height="7"></rect>
+                      <rect x="3" y="14" width="7" height="7"></rect>
+                    </svg>
+                  </div>
+                  <span class="payment-label">Transferencia</span>
+                </button>
+
+                <button class="payment-btn" data-method="mixed" id="payMethodMixed">
+                  <div class="payment-icon-wrap">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="9" cy="12" r="5"></circle>
+                      <circle cx="15" cy="12" r="5"></circle>
+                    </svg>
+                  </div>
+                  <span class="payment-label">Pago Mixto</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Calculadoras de Efectivo / Mixto justo debajo de seleccionar el método -->
+            <div class="cash-calculator" id="cashCalculator" style="display: none;">
+              <div class="calc-row">
+                <label for="cashReceivedInput">Efectivo recibido:</label>
+                <div class="cash-input-wrap">
+                  <span>$</span>
+                  <input type="number" id="cashReceivedInput" placeholder="0.00" step="any">
+                </div>
+              </div>
+              <div class="quick-bills">
+                <button type="button" class="btn-bill" data-amount="exact">Exacto</button>
+                <button type="button" class="btn-bill" data-amount="250">$250</button>
+                <button type="button" class="btn-bill" data-amount="300">$300</button>
+                <button type="button" class="btn-bill" data-amount="500">$500</button>
+              </div>
+              <div class="change-display">
+                <span>Cambio a devolver:</span>
+                <strong id="changeAmount">$0.00</strong>
+              </div>
+            </div>
+
+            <div class="cash-calculator mixed-calculator" id="mixedCalculator" style="display: none; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
+              <div style="font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 8px; text-transform: uppercase;">Desglose de Pago Mixto</div>
+              <div class="calc-row" style="margin-bottom: 6px;">
+                <label for="mixedCashInput" style="font-size: 12px; font-weight: 600;">Efectivo:</label>
+                <div class="cash-input-wrap"><span>$</span><input type="number" id="mixedCashInput" placeholder="0.00" step="0.50"></div>
+              </div>
+              <div class="calc-row" style="margin-bottom: 6px;">
+                <label for="mixedCardInput" style="font-size: 12px; font-weight: 600;">Tarjeta TPV:</label>
+                <div class="cash-input-wrap"><span>$</span><input type="number" id="mixedCardInput" placeholder="0.00" step="0.50"></div>
+              </div>
+              <div class="calc-row" style="margin-bottom: 6px;">
+                <label for="mixedTransferInput" style="font-size: 12px; font-weight: 600;">Transferencia:</label>
+                <div class="cash-input-wrap"><span>$</span><input type="number" id="mixedTransferInput" placeholder="0.00" step="0.50"></div>
+              </div>
+              <div id="mixedStatusMsg" style="font-size: 11px; font-weight: 600; text-align: right; margin-top: 4px;"></div>
+            </div>
+
+            <!-- 3. Botón Principal de Cobro -->
+            <button class="btn-checkout" id="btnCheckout">
+              <div class="checkout-content">
+                <svg class="checkout-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+                  <circle cx="12" cy="12" r="2"></circle>
+                  <path d="M6 12h.01M18 12h.01"></path>
+                </svg>
+                <span class="checkout-text" id="checkoutBtnLabel">Cobrar $0.00</span>
+              </div>
+              <span class="badge-space">Espacio</span>
+            </button>
+
+            <!-- 4. Servicios Adicionales (Acceso secundario limpio al pie) -->
+            <div class="services-panel-section services-panel-bottom">
               <button type="button" class="btn-services-toggle" id="btnToggleServices" aria-expanded="false" title="Haz clic para ver u ocultar los servicios">
                 <div class="services-toggle-left">
                   <div class="services-toggle-icon">
@@ -560,115 +697,7 @@
               </div>
             </div>
 
-            <!-- Large Total Highlight Box (Bloque Naranja) -->
-            <div class="total-net-card">
-              <span class="total-net-label">TOTAL NETO A COBRAR</span>
-              <div class="total-net-amount" id="summaryTotalNet">$0.00</div>
-            </div>
-
-            <!-- Primary Cobrar Button -->
-            <button class="btn-checkout" id="btnCheckout">
-              <div class="checkout-content">
-                <svg class="checkout-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="2" y="6" width="20" height="12" rx="2"></rect>
-                  <circle cx="12" cy="12" r="2"></circle>
-                  <path d="M6 12h.01M18 12h.01"></path>
-                </svg>
-                <span class="checkout-text" id="checkoutBtnLabel">Cobrar $0.00</span>
-              </div>
-              <span class="badge-space">Espacio</span>
-            </button>
-
-            <!-- Payment Method Selector -->
-            <div class="payment-method-section">
-              <h4 class="payment-section-title">MÉTODO DE PAGO INMEDIATO</h4>
-              <div class="payment-buttons-grid">
-                <button class="payment-btn active" data-method="cash" id="payMethodCash">
-                  <div class="payment-icon-wrap">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <rect x="2" y="6" width="20" height="12" rx="2"></rect>
-                      <circle cx="12" cy="12" r="2"></circle>
-                      <path d="M6 12h.01M18 12h.01"></path>
-                    </svg>
-                  </div>
-                  <span class="payment-label">Efectivo</span>
-                </button>
-
-                <button class="payment-btn" data-method="card" id="payMethodCard">
-                  <div class="payment-icon-wrap">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
-                      <line x1="1" y1="10" x2="23" y2="10"></line>
-                    </svg>
-                  </div>
-                  <span class="payment-label">Tarjeta TPV</span>
-                </button>
-
-                <button class="payment-btn" data-method="transfer" id="payMethodTransfer">
-                  <div class="payment-icon-wrap">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <rect x="3" y="3" width="7" height="7"></rect>
-                      <rect x="14" y="3" width="7" height="7"></rect>
-                      <rect x="14" y="14" width="7" height="7"></rect>
-                      <rect x="3" y="14" width="7" height="7"></rect>
-                    </svg>
-                  </div>
-                  <span class="payment-label">Transferencia</span>
-                </button>
-
-                <button class="payment-btn" data-method="mixed" id="payMethodMixed">
-                  <div class="payment-icon-wrap">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <circle cx="9" cy="12" r="5"></circle>
-                      <circle cx="15" cy="12" r="5"></circle>
-                    </svg>
-                  </div>
-                  <span class="payment-label">Pago Mixto</span>
-                </button>
-              </div>
-            </div>
-
-            <!-- Drawer for Mixed Payment Details -->
-            <div class="cash-calculator mixed-calculator" id="mixedCalculator" style="display: none; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-top: 10px;">
-              <div style="font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 8px; text-transform: uppercase;">Desglose de Pago Mixto</div>
-              <div class="calc-row" style="margin-bottom: 6px;">
-                <label for="mixedCashInput" style="font-size: 12px; font-weight: 600;">Efectivo:</label>
-                <div class="cash-input-wrap"><span>$</span><input type="number" id="mixedCashInput" placeholder="0.00" step="0.50"></div>
-              </div>
-              <div class="calc-row" style="margin-bottom: 6px;">
-                <label for="mixedCardInput" style="font-size: 12px; font-weight: 600;">Tarjeta TPV:</label>
-                <div class="cash-input-wrap"><span>$</span><input type="number" id="mixedCardInput" placeholder="0.00" step="0.50"></div>
-              </div>
-              <div class="calc-row" style="margin-bottom: 6px;">
-                <label for="mixedTransferInput" style="font-size: 12px; font-weight: 600;">Transferencia:</label>
-                <div class="cash-input-wrap"><span>$</span><input type="number" id="mixedTransferInput" placeholder="0.00" step="0.50"></div>
-              </div>
-              <div id="mixedStatusMsg" style="font-size: 11px; font-weight: 600; text-align: right; margin-top: 4px;"></div>
-            </div>
-
-
-            <!-- Drawer/Modal for Cash Payment Details -->
-            <div class="cash-calculator" id="cashCalculator" style="display: none;">
-              <div class="calc-row">
-                <label for="cashReceivedInput">Efectivo recibido:</label>
-                <div class="cash-input-wrap">
-                  <span>$</span>
-                  <input type="number" id="cashReceivedInput" placeholder="0.00" step="any">
-                </div>
-              </div>
-              <div class="quick-bills">
-                <button type="button" class="btn-bill" data-amount="exact">Exacto</button>
-                <button type="button" class="btn-bill" data-amount="250">$250</button>
-                <button type="button" class="btn-bill" data-amount="300">$300</button>
-                <button type="button" class="btn-bill" data-amount="500">$500</button>
-              </div>
-              <div class="change-display">
-                <span>Cambio a devolver:</span>
-                <strong id="changeAmount">$0.00</strong>
-              </div>
-            </div>
-
-            <!-- Shift Status -->
+            <!-- 5. Shift Status -->
             <div class="settlement-footer">
               <span class="shift-name">Turno 2 • Matutino</span>
             </div>
@@ -1164,8 +1193,12 @@
 
             <!-- Card 2: Movimientos de caja -->
             <div class="cut-card">
-              <div class="cut-card-header">
+              <div class="cut-card-header" style="display: flex; justify-content: space-between; align-items: center;">
                 <h3 class="cut-card-title">Movimientos de caja</h3>
+                <a href="javascript:void(0)" onclick="window.switchView('cash-movements'); return false;" style="font-size: 12px; font-weight: 600; color: #0284c7; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;">
+                  <span>Inspeccionar ingresos/egresos</span>
+                  <span>&rarr;</span>
+                </a>
               </div>
 
               <div class="cut-table-wrap">
@@ -1180,16 +1213,9 @@
                   <tbody>
                     <tr>
                       <td>
-                        <span style="font-weight: 500; color: #1e293b;">Ventas</span>
-                      </td>
-                      <td style="text-align: center;" id="cutMoveVentasCount">0</td>
-                      <td style="text-align: right; font-weight: 600;" id="cutMoveVentasAmount">$0.00</td>
-                    </tr>
-                    <tr>
-                      <td>
                         <span class="concept-cell">
                           <span class="arrow-in">↑</span>
-                          <span>Entradas de efectivo</span>
+                          <span>Total de ingresos</span>
                         </span>
                       </td>
                       <td style="text-align: center;" id="cutMoveEntriesCount">0</td>
@@ -1199,21 +1225,11 @@
                       <td>
                         <span class="concept-cell">
                           <span class="arrow-out">↓</span>
-                          <span>Salidas de efectivo</span>
+                          <span>Total de egresos</span>
                         </span>
                       </td>
                       <td style="text-align: center;" id="cutMoveExitsCount">0</td>
                       <td style="text-align: right;" class="amt-negative" id="cutMoveExitsAmount">- $0.00</td>
-                    </tr>
-                    <tr>
-                      <td>
-                        <span class="concept-cell">
-                          <span class="arrow-out">↓</span>
-                          <span>Pagos a proveedores</span>
-                        </span>
-                      </td>
-                      <td style="text-align: center;" id="cutMoveSupplierCount">0</td>
-                      <td style="text-align: right;" class="amt-negative" id="cutMoveSupplierAmount">- $0.00</td>
                     </tr>
                   </tbody>
                 </table>
@@ -1234,7 +1250,7 @@
                   <span class="expected-cash-label">Efectivo esperado</span>
                   <span class="expected-cash-value" id="cutExpectedCash">$1,000.00</span>
                 </div>
-                <span class="expected-cash-hint">Fondo inicial + Ventas efectivo + Entradas - Salidas - Pagos</span>
+                <span class="expected-cash-hint">Fondo inicial + Ventas en efectivo + Ingresos en efectivo - Egresos en efectivo</span>
               </div>
 
               <!-- Efectivo contado -->
@@ -1267,6 +1283,9 @@
           </div>
         </div>
       </main>
+
+      <!-- 5. MÓDULO DE INGRESOS Y EGRESOS (Definido y llamado desde cashMovements/cashMovements.html) -->
+      <div id="cashMovementsMount"></div>
 
       <!-- 6. REPORTES DE CORTES HISTÓRICOS VIEW -->
       <main class="reports-view-container" id="reportsViewContainer" style="display: none; padding: 24px; flex-direction: column; gap: 20px; width: 100%; overflow-y: auto;">
@@ -1828,12 +1847,16 @@
   <!-- Global Configuration -->
   <script src="js/config.js"></script>
   <!-- Client Data Logic -->
+  <script src="js/cashMovements/cashMovementsClient.js"></script>
   <script src="js/supabaseClient.js"></script>
+  <!-- Módulo de Impresión de Tickets (debe cargarse antes que salesHistory.js y posPayments.js) -->
+  <script src="js/app/printTicket.js"></script>
   <!-- Main Application Logic (Modular) -->
   <script src="js/app/app.js"></script>
   <script src="js/app/login.js"></script>
   <script src="js/app/inventory.js"></script>
   <script src="js/app/salesHistory.js"></script>
+  <script src="js/app/cashMovements.js"></script>
   <script src="js/app/cutCash.js"></script>
   <script src="js/app/reports.js"></script>
   <script src="js/app/pos/pos.js"></script>

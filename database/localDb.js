@@ -15,9 +15,9 @@ const path = require('path');
 const crypto = require('crypto');
 const { DatabaseSync } = require('node:sqlite');
 
-const DB_DIR = __dirname;
-const DB_FILE = process.env.LOCAL_DB_FILE || path.join(DB_DIR, 'pos_local.sqlite');
-const BACKUP_DIR = path.join(DB_DIR, 'backups');
+const DB_DIR = path.dirname(process.env.LOCAL_DB_FILE || path.join(__dirname, 'pos_local.sqlite'));
+const DB_FILE = process.env.LOCAL_DB_FILE || path.join(__dirname, 'pos_local.sqlite');
+const BACKUP_DIR = process.env.LOCAL_BACKUP_DIR || path.join(DB_DIR, 'backups');
 
 const TERMINALS = { C1: 'Caja 1', C2: 'Caja 2' };
 const PAYMENT_METHODS = ['cash', 'card', 'transfer', 'mixed'];
@@ -218,12 +218,17 @@ CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id);
 
 CREATE TABLE IF NOT EXISTS cash_movements (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  cash_cut_id INTEGER NOT NULL REFERENCES cash_cuts(id),
-  terminal_code TEXT NOT NULL,
+  cash_cut_id INTEGER REFERENCES cash_cuts(id),
+  terminal_code TEXT NOT NULL CHECK (terminal_code IN ('C1','C2')),
+  terminal_name TEXT NOT NULL DEFAULT 'Caja 1',
+  user_id INTEGER REFERENCES users(id),
+  user_name TEXT NOT NULL DEFAULT 'Administrador',
   movement_type TEXT NOT NULL CHECK (movement_type IN ('inflow','outflow','supplier_payout')),
+  concept TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'Otros',
   amount REAL NOT NULL CHECK (amount > 0),
-  concept TEXT,
-  user_name TEXT,
+  payment_method TEXT NOT NULL DEFAULT 'cash' CHECK (payment_method IN ('cash','card','transfer')),
+  notes TEXT,
   created_at TEXT NOT NULL DEFAULT ${TS},
   updated_at TEXT NOT NULL DEFAULT ${TS},
   ${SYNC_COLS}
@@ -295,6 +300,18 @@ function createDirtyTriggers(d) {
 }
 
 function migrateLegacyTables(d) {
+  // Asegurar columnas nuevas en cash_movements para bases de datos existentes
+  try {
+    const cols = d.prepare('PRAGMA table_info(cash_movements)').all().map(c => c.name);
+    if (cols.length > 0) {
+      if (!cols.includes('terminal_name')) d.exec("ALTER TABLE cash_movements ADD COLUMN terminal_name TEXT NOT NULL DEFAULT 'Caja 1'");
+      if (!cols.includes('user_id')) d.exec('ALTER TABLE cash_movements ADD COLUMN user_id INTEGER REFERENCES users(id)');
+      if (!cols.includes('category')) d.exec("ALTER TABLE cash_movements ADD COLUMN category TEXT NOT NULL DEFAULT 'Otros'");
+      if (!cols.includes('payment_method')) d.exec("ALTER TABLE cash_movements ADD COLUMN payment_method TEXT NOT NULL DEFAULT 'cash'");
+      if (!cols.includes('notes')) d.exec('ALTER TABLE cash_movements ADD COLUMN notes TEXT');
+    }
+  } catch (_) {}
+
   // Migra la base anterior (tabla "productos") si existe, sin perder stock.
   const legacy = d.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='productos'`).get();
   if (!legacy) return;
@@ -541,11 +558,22 @@ function searchProducts(term, limit = 15) {
 function validatePromo(promo, price) {
   if (promo === undefined || promo === null || promo === '') return null;
   const p = typeof promo === 'string' ? parsePromo(promo) : promo;
-  if (!p || p.type !== 'bundle') throw new PosError('INVALID_INPUT', 'Promoción inválida (solo se admite tipo "bundle").');
-  const q = num(p.quantity, { name: 'Piezas de la promoción', min: 2, max: 1000, integer: true });
-  const bp = num(p.bundle_price, { name: 'Precio de la promoción', min: 0.01 });
-  if (toCents(bp) >= toCents(q * price)) throw new PosError('INVALID_INPUT', 'El precio de la promoción debe ser menor al precio normal.');
-  return JSON.stringify({ type: 'bundle', quantity: q, bundle_price: bp, badge_text: String(p.badge_text || `${q}x$${bp}`).slice(0, 40) });
+  if (!p || typeof p !== 'object') {
+    throw new PosError('INVALID_INPUT', 'Promoción inválida.');
+  }
+  const type = p.type || (p.discount_percent !== undefined || p.percentage !== undefined ? 'percentage' : 'bundle');
+  if (type === 'bundle') {
+    const q = num(p.quantity, { name: 'Piezas de la promoción', min: 2, max: 1000, integer: true });
+    const bp = num(p.bundle_price, { name: 'Precio de la promoción', min: 0.01 });
+    if (price !== undefined && price !== null && toCents(bp) >= toCents(q * price)) {
+      throw new PosError('INVALID_INPUT', 'El precio de la promoción debe ser menor al precio normal.');
+    }
+    return JSON.stringify({ type: 'bundle', quantity: q, bundle_price: bp, badge_text: String(p.badge_text || `${q}x$${bp}`).slice(0, 40) });
+  } else if (type === 'percentage' || type === 'percent') {
+    const pct = num(p.discount_percent ?? p.percentage ?? p.discount, { name: 'Porcentaje de descuento', min: 0.01, max: 100 });
+    return JSON.stringify({ type: 'percentage', discount_percent: pct, badge_text: String(p.badge_text || `-${pct}%`).slice(0, 40) });
+  }
+  throw new PosError('INVALID_INPUT', 'Promoción inválida (se admiten tipos "bundle" o "percentage").');
 }
 
 function insertMovement(d, { productId, type, qty, prev, next, cost, reference, notes, user }) {
@@ -791,26 +819,48 @@ function computeShiftTotals(d, cut) {
       COALESCE(SUM(CASE WHEN payment_method='card' THEN total_net END),0) card_sales,
       COALESCE(SUM(CASE WHEN payment_method='transfer' THEN total_net END),0) transfer_sales,
       COALESCE(SUM(CASE WHEN payment_method='mixed' THEN total_net END),0) mixed_sales,
-      COALESCE(SUM(cash_amount),0) cash_in_drawer
+      COALESCE(SUM(cash_amount),0) cash_in_drawer,
+      COUNT(CASE WHEN payment_method='cash' THEN 1 END) cash_cnt,
+      COUNT(CASE WHEN payment_method='card' THEN 1 END) card_cnt,
+      COUNT(CASE WHEN payment_method='transfer' THEN 1 END) transfer_cnt,
+      COUNT(CASE WHEN payment_method='mixed' THEN 1 END) mixed_cnt
     FROM sales WHERE cash_cut_id = ? AND status = 'completed'
   `).get(cut.id);
   const m = d.prepare(`
-    SELECT COALESCE(SUM(CASE WHEN movement_type='inflow' THEN amount END),0) inflows,
-           COALESCE(SUM(CASE WHEN movement_type='outflow' THEN amount END),0) outflows,
-           COALESCE(SUM(CASE WHEN movement_type='supplier_payout' THEN amount END),0) supplier
-    FROM cash_movements WHERE cash_cut_id = ?
-  `).get(cut.id);
-  const expectedC = toCents(cut.initial_fund) + toCents(s.cash_in_drawer) + toCents(m.inflows) - toCents(m.outflows) - toCents(m.supplier);
+    SELECT
+      COALESCE(SUM(CASE WHEN movement_type='inflow' THEN amount END),0) total_inflows,
+      COALESCE(SUM(CASE WHEN movement_type='outflow' THEN amount END),0) total_outflows,
+      COALESCE(SUM(CASE WHEN movement_type='inflow' AND (payment_method IS NULL OR payment_method='cash') THEN amount END),0) cash_inflows,
+      COALESCE(SUM(CASE WHEN movement_type='outflow' AND (payment_method IS NULL OR payment_method='cash') THEN amount END),0) cash_outflows,
+      COALESCE(SUM(CASE WHEN movement_type='supplier_payout' THEN amount END),0) supplier,
+      COUNT(CASE WHEN movement_type='inflow' THEN 1 END) inflows_count,
+      COUNT(CASE WHEN movement_type='outflow' THEN 1 END) outflows_count,
+      COUNT(CASE WHEN movement_type='inflow' AND (payment_method IS NULL OR payment_method='cash') THEN 1 END) cash_inflows_count,
+      COUNT(CASE WHEN movement_type='outflow' AND (payment_method IS NULL OR payment_method='cash') THEN 1 END) cash_outflows_count
+    FROM cash_movements
+    WHERE cash_cut_id = ? OR (cash_cut_id IS NULL AND terminal_code = ? AND created_at >= ?)
+  `).get(cut.id, cut.terminal_code, cut.opened_at);
+  const expectedC = toCents(cut.initial_fund) + toCents(s.cash_in_drawer) + toCents(m.cash_inflows) - toCents(m.cash_outflows) - toCents(m.supplier);
   return {
     total_sales_count: s.cnt,
     total_sales_amount: fromCents(toCents(s.total)),
     avg_ticket: s.cnt ? fromCents(toCents(s.total) / s.cnt) : 0,
     cash_sales: fromCents(toCents(s.cash_sales)),
+    cash_sales_count: s.cash_cnt,
     card_sales: fromCents(toCents(s.card_sales)),
+    card_sales_count: s.card_cnt,
     transfer_sales: fromCents(toCents(s.transfer_sales)),
+    transfer_sales_count: s.transfer_cnt,
     mixed_sales: fromCents(toCents(s.mixed_sales)),
-    cash_inflows: fromCents(toCents(m.inflows)),
-    cash_outflows: fromCents(toCents(m.outflows)),
+    mixed_sales_count: s.mixed_cnt,
+    cash_inflows: fromCents(toCents(m.cash_inflows)),
+    cash_outflows: fromCents(toCents(m.cash_outflows)),
+    total_inflows: fromCents(toCents(m.total_inflows)),
+    total_outflows: fromCents(toCents(m.total_outflows)),
+    inflows_count: m.inflows_count,
+    outflows_count: m.outflows_count,
+    cash_inflows_count: m.cash_inflows_count,
+    cash_outflows_count: m.cash_outflows_count,
     supplier_payouts: fromCents(toCents(m.supplier)),
     expected_cash: fromCents(expectedC)
   };
@@ -864,6 +914,13 @@ function closeTerminalShift(code, countedCash, notes, user) {
   return tx((d) => {
     const cut = getOpenCut(d, tc);
     if (!cut) throw new PosError('SHIFT_CLOSED', `${TERMINALS[tc]} no tiene un turno abierto.`, 409);
+
+    // Enlazar movimientos del turno que no tengan asignado el cash_cut_id
+    d.prepare(`
+      UPDATE cash_movements SET cash_cut_id = ?
+      WHERE cash_cut_id IS NULL AND terminal_code = ? AND created_at >= ?
+    `).run(cut.id, tc, cut.opened_at);
+
     const t = computeShiftTotals(d, cut);
     const diff = fromCents(toCents(counted) - toCents(t.expected_cash));
     const info = d.prepare(`
@@ -879,23 +936,28 @@ function closeTerminalShift(code, countedCash, notes, user) {
   });
 }
 
+// ------------------------------------------------------------------------------
+// MÓDULO DE MOVIMIENTOS DE CAJA (INGRESOS Y EGRESOS) - RESPONSABILIDAD SEPARADA
+// ------------------------------------------------------------------------------
+const { createCashMovementsModule } = require('./cashMovements/cashMovementsDb');
+
+const cashMovementsModule = createCashMovementsModule({
+  initLocalDatabase,
+  terminalCode,
+  TERMINALS,
+  toCents,
+  num,
+  str,
+  PosError,
+  getOpenCut,
+  computeShiftTotals,
+  createLocalSnapshot,
+  tx,
+  nowIso
+});
+
 function registerCashMovement(code, type, amount, concept, user) {
-  const tc = terminalCode(code);
-  if (!['inflow', 'outflow', 'supplier_payout'].includes(type)) throw new PosError('INVALID_INPUT', 'Tipo de movimiento inválido.');
-  const amt = num(amount, { name: 'Monto', min: 0.01, max: 500000 });
-  return tx((d) => {
-    const cut = getOpenCut(d, tc);
-    if (!cut) throw new PosError('SHIFT_CLOSED', `${TERMINALS[tc]} no tiene un turno abierto.`, 409);
-    if (type !== 'inflow') {
-      const t = computeShiftTotals(d, cut);
-      if (toCents(amt) > toCents(t.expected_cash)) {
-        throw new PosError('INSUFFICIENT_CASH', `No hay suficiente efectivo en caja. Disponible: $${t.expected_cash.toFixed(2)}.`, 409);
-      }
-    }
-    d.prepare(`INSERT INTO cash_movements (cash_cut_id, terminal_code, movement_type, amount, concept, user_name) VALUES (?,?,?,?,?,?)`)
-      .run(cut.id, tc, type, amt, concept ? String(concept).slice(0, 150) : null, user.full_name);
-    return { ok: true, totals: computeShiftTotals(d, cut) };
-  });
+  return cashMovementsModule.registerCashMovement(code, type, amount, concept, user);
 }
 
 // ------------------------------------------------------------------------------
@@ -957,11 +1019,24 @@ function processSale(payload, user) {
       let discC = 0;
       let promoLabel = null;
       const promo = parsePromo(p.promo_rule);
-      if (promo && promo.type === 'bundle' && promo.quantity >= 2) {
-        const bundles = Math.floor(qty / promo.quantity);
-        if (bundles > 0) {
-          discC = Math.max(0, Math.min(grossC, bundles * promo.quantity * priceC - bundles * toCents(promo.bundle_price)));
-          promoLabel = promo.badge_text || 'Promoción';
+      if (promo) {
+        const promoType = promo.type || (promo.discount_percent !== undefined ? 'percentage' : 'bundle');
+        if (promoType === 'bundle' && promo.quantity >= 2) {
+          const bundles = Math.floor(qty / promo.quantity);
+          if (bundles > 0) {
+            const normalBundleCostC = bundles * promo.quantity * priceC;
+            const promoBundleCostC = bundles * toCents(promo.bundle_price);
+            if (promoBundleCostC < normalBundleCostC) {
+              discC = Math.max(0, Math.min(grossC, normalBundleCostC - promoBundleCostC));
+              promoLabel = promo.badge_text || `${promo.quantity}x$${promo.bundle_price}`;
+            }
+          }
+        } else if (promoType === 'percentage' || promoType === 'percent') {
+          const pct = Number(promo.discount_percent ?? promo.percentage ?? 0);
+          if (pct > 0 && pct <= 100) {
+            discC = Math.max(0, Math.min(grossC, Math.round(grossC * (pct / 100))));
+            promoLabel = promo.badge_text || `-${pct}%`;
+          }
         }
       }
       subtotalC += grossC;
@@ -1186,6 +1261,181 @@ function getBackupStatus() {
 
 let isCloudBackingUp = false;
 
+// Consultar movimientos económicos (ingresos y egresos) - Delegado al módulo separado
+function getCashMovements(options = {}) {
+  return cashMovementsModule.getCashMovements(options);
+}
+
+// Registrar un movimiento económico - Delegado al módulo separado
+function saveCashMovement(mov, user) {
+  return cashMovementsModule.saveCashMovement(mov, user);
+}
+
+// Eliminar un movimiento económico - Delegado al módulo separado
+function deleteCashMovement(id) {
+  return cashMovementsModule.deleteCashMovement(id);
+}
+
+const STARTER_CATALOG = [
+  { barcode: '750101111521', sku: 'SAB-45', name: 'Sabritas Original Sal 45g', brand: 'Sabritas', category: 'Botanas y Frituras', cost: 12.50, price: 18.00, stock: 24, icon_type: 'snacks', promo_rule: null },
+  { barcode: '750185538472', sku: 'COCA-600', name: 'Coca-Cola Original 600ml', brand: 'Coca-Cola', category: 'Bebidas y Refrescos', cost: 14.00, price: 19.00, stock: 42, icon_type: 'soda', promo_rule: null },
+  { barcode: '750102054829', sku: 'LALA-1L', name: 'Leche Lala Entera 1L', brand: 'Lala', category: 'Lácteos y Huevos', cost: 21.00, price: 27.50, stock: 16, icon_type: 'milk', promo_rule: null },
+  { barcode: '750100011220', sku: 'BIMBO-GDE', name: 'Pan Blanco Bimbo Grande', brand: 'Bimbo', category: 'Panadería y Tortillería', cost: 32.00, price: 42.00, stock: 8, icon_type: 'bread', promo_rule: null },
+  { barcode: '750103912156', sku: 'NUTRI-850', name: 'Aceite Nutrioli 850ml', brand: 'Nutrioli', category: 'Despensa Básica', cost: 34.00, price: 45.00, stock: 3, icon_type: 'oil', promo_rule: null },
+  { barcode: '750102600450', sku: 'ZOTE-400', name: 'Jabón Zote Rosa 400g', brand: 'Zote', category: 'Limpieza y Hogar', cost: 15.00, price: 22.00, stock: 0, icon_type: 'soap', promo_rule: null },
+  { barcode: '750300049111', sku: 'HUEVO-18', name: 'Huevo Blanco San Juan 18pzs', brand: 'San Juan', category: 'Lácteos y Huevos', cost: 38.00, price: 49.00, stock: 14, icon_type: 'eggs', promo_rule: null },
+  { barcode: '750107130114', sku: 'FRIJOL-1KG', name: 'Frijol Negro Verde Valle 1kg', brand: 'Verde Valle', category: 'Despensa Básica', cost: 28.00, price: 36.00, stock: 22, icon_type: 'beans', promo_rule: null }
+];
+
+function ensureStarterCatalog() {
+  const d = initLocalDatabase();
+  const seeded = getConfig('starter_seeded');
+  const count = d.prepare('SELECT COUNT(*) c FROM products WHERE is_active = 1').get().c;
+  if (count > 0) {
+    if (!seeded) setConfig('starter_seeded', '1');
+    return { seeded: false, count };
+  }
+  if (seeded === '1') return { seeded: false, count: 0 };
+
+  return tx((dbTx) => {
+    const ins = dbTx.prepare(`
+      INSERT OR IGNORE INTO products (barcode, sku, name, brand, category, cost, price, stock, min_stock, icon_type, promo_rule, origin)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 5, ?, ?, 'starter')
+    `);
+    for (const p of STARTER_CATALOG) {
+      ins.run(p.barcode, p.sku, p.name, p.brand, p.category, p.cost, p.price, p.stock, p.icon_type, p.promo_rule);
+    }
+    dbTx.prepare("INSERT INTO app_config (key, value, updated_at) VALUES ('starter_seeded', '1', ?) ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at").run(nowIso());
+    return { seeded: true, count: STARTER_CATALOG.length };
+  });
+}
+
+async function pullFromCloudSync(supabaseClient) {
+  if (!supabaseClient) return { ok: false, reason: 'NO_SUPABASE' };
+  const d = initLocalDatabase();
+  const pulled = { products: 0, sales: 0, cash_cuts: 0, cash_movements: 0 };
+
+  try {
+    // 1. Productos desde Supabase (prioriza la nube si local no tiene cambios pendientes)
+    const { data: cloudProds, error: pErr } = await supabaseClient.from('products').select('*').order('id');
+    if (!pErr && Array.isArray(cloudProds) && cloudProds.length > 0) {
+      tx((dbTx) => {
+        for (const p of cloudProds) {
+          if (!p || !p.barcode || !p.name) continue;
+          const local = dbTx.prepare('SELECT id, rev, synced_rev, updated_at FROM products WHERE barcode = ?').get(String(p.barcode));
+          const promoText = p.promo_rule ? (typeof p.promo_rule === 'string' ? p.promo_rule : JSON.stringify(p.promo_rule)) : null;
+          if (!local) {
+            dbTx.prepare(`
+              INSERT OR IGNORE INTO products (barcode, sku, name, brand, category, cost, price, stock, min_stock, icon_type, promo_rule, origin, is_active, created_at, updated_at, rev, synced_rev)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
+            `).run(
+              String(p.barcode), p.sku || String(p.barcode), String(p.name), p.brand || null,
+              p.category || 'Abarrotes', Math.max(0, Number(p.cost) || 0), Math.max(0, Number(p.price) || 0),
+              Math.max(0, parseInt(p.stock, 10) || 0), Math.max(0, parseInt(p.min_stock, 10) || 5),
+              p.icon_type || 'bread', promoText, p.origin || 'cloud_sync', p.is_active === false ? 0 : 1,
+              p.created_at || nowIso(), p.updated_at || nowIso()
+            );
+            pulled.products++;
+          } else if (local.rev === local.synced_rev && p.updated_at && String(p.updated_at) > String(local.updated_at)) {
+            dbTx.prepare(`
+              UPDATE products SET sku=?, name=?, brand=?, category=?, cost=?, price=?, stock=?, min_stock=?, icon_type=?, promo_rule=?, is_active=?, updated_at=?, synced_rev=rev
+              WHERE id=?
+            `).run(
+              p.sku || String(p.barcode), String(p.name), p.brand || null, p.category || 'Abarrotes',
+              Math.max(0, Number(p.cost) || 0), Math.max(0, Number(p.price) || 0),
+              Math.max(0, parseInt(p.stock, 10) || 0), Math.max(0, parseInt(p.min_stock, 10) || 5),
+              p.icon_type || 'bread', promoText, p.is_active === false ? 0 : 1, p.updated_at, local.id
+            );
+            pulled.products++;
+          }
+        }
+      });
+    }
+
+    // 2. Cortes de caja históricos / recientes
+    const { data: cloudCuts, error: cErr } = await supabaseClient.from('cash_cuts').select('*').order('id');
+    if (!cErr && Array.isArray(cloudCuts) && cloudCuts.length > 0) {
+      tx((dbTx) => {
+        for (const c of cloudCuts) {
+          if (!c || !c.terminal_code) continue;
+          const exists = dbTx.prepare('SELECT id FROM cash_cuts WHERE id = ? OR (terminal_code = ? AND opened_at = ?)').get(c.id, c.terminal_code, c.opened_at);
+          if (!exists) {
+            if (c.status === 'open' && getOpenCut(dbTx, c.terminal_code)) continue;
+            dbTx.prepare(`
+              INSERT OR IGNORE INTO cash_cuts (
+                id, terminal_code, terminal_name, cashier_name, status, opened_at, closed_at, closed_by,
+                initial_fund, total_sales_count, total_sales_amount, cash_sales, card_sales, transfer_sales, mixed_sales,
+                cash_inflows, cash_outflows, supplier_payouts, expected_cash, counted_cash, difference, notes, updated_at, rev, synced_rev
+              ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            `).run(
+              c.id, c.terminal_code, c.terminal_name || (c.terminal_code === 'C2' ? 'Caja 2' : 'Caja 1'),
+              c.cashier_name || 'Administrador', c.status === 'closed' ? 'closed' : 'open',
+              c.opened_at || nowIso(), c.closed_at || null, c.closed_by || null,
+              Number(c.initial_fund) || 0, Number(c.total_sales_count) || 0, Number(c.total_sales_amount) || 0,
+              Number(c.cash_sales) || 0, Number(c.card_sales) || 0, Number(c.transfer_sales) || 0, Number(c.mixed_sales) || 0,
+              Number(c.cash_inflows) || 0, Number(c.cash_outflows) || 0, Number(c.supplier_payouts) || 0,
+              Number(c.expected_cash) || 0, c.counted_cash != null ? Number(c.counted_cash) : null,
+              c.difference != null ? Number(c.difference) : null, c.notes || null, c.updated_at || nowIso(), 1, 1
+            );
+            pulled.cash_cuts++;
+          }
+        }
+      });
+    }
+
+    // 3. Ventas e ítems faltantes desde Supabase
+    const { data: cloudSales, error: sErr } = await supabaseClient.from('sales').select('*').order('id', { ascending: false }).limit(200);
+    if (!sErr && Array.isArray(cloudSales) && cloudSales.length > 0) {
+      tx((dbTx) => {
+        for (const s of cloudSales) {
+          if (!s || !s.folio) continue;
+          const dup = dbTx.prepare('SELECT id FROM sales WHERE folio = ?').get(s.folio);
+          if (dup) continue;
+          let cutRow = s.cash_cut_id ? dbTx.prepare('SELECT id FROM cash_cuts WHERE id = ?').get(s.cash_cut_id) : null;
+          if (!cutRow) {
+            cutRow = dbTx.prepare('SELECT id FROM cash_cuts WHERE terminal_code = ? ORDER BY id DESC LIMIT 1').get(s.terminal_code || 'C1');
+          }
+          if (!cutRow) continue;
+          const info = dbTx.prepare(`
+            INSERT OR IGNORE INTO sales (
+              folio, cash_cut_id, terminal_code, terminal_name, cashier_name, total_items, total_pieces,
+              subtotal, discount, total_net, payment_method, cash_amount, card_amount, transfer_amount,
+              cash_received, cash_change, status, created_at, updated_at, rev, synced_rev
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1)
+          `).run(
+            s.folio, cutRow.id, s.terminal_code || 'C1', s.terminal_name || 'Caja 1', s.cashier_name || 'Cajero',
+            Math.max(1, Number(s.total_items) || 1), Math.max(1, Number(s.total_pieces) || 1),
+            Number(s.subtotal) || 0, Number(s.discount) || 0, Number(s.total_net) || 0,
+            PAYMENT_METHODS.includes(s.payment_method) ? s.payment_method : 'cash',
+            Number(s.cash_amount) || 0, Number(s.card_amount) || 0, Number(s.transfer_amount) || 0,
+            s.cash_received != null ? Number(s.cash_received) : null,
+            s.cash_change != null ? Number(s.cash_change) : null,
+            s.status === 'cancelled' ? 'cancelled' : 'completed',
+            s.created_at || nowIso(), s.updated_at || nowIso()
+          );
+          if (info.changes > 0) pulled.sales++;
+        }
+      });
+    }
+
+    setConfig('last_cloud_pull', nowIso());
+    return { ok: true, pulled };
+  } catch (err) {
+    console.warn('[SYNC CLOUD -> LOCAL] Advertencia:', err.message);
+    return { ok: false, error: err.message };
+  }
+}
+
+async function syncStartup(supabaseClient) {
+  initLocalDatabase();
+  const pullRes = await pullFromCloudSync(supabaseClient);
+  const seedRes = ensureStarterCatalog();
+  if (supabaseClient && seedRes && seedRes.seeded) {
+    try { await performCloudBackup(supabaseClient); } catch (_) {}
+  }
+  return { ok: true, pullRes, seedRes };
+}
+
 /**
  * Respaldo periódico incremental a Supabase (Plan Free)
  * Sube únicamente los registros modificados (rev > synced_rev) sin saturar conexiones ni cuotas
@@ -1214,9 +1464,26 @@ async function performCloudBackup(supabaseClient) {
         return copy;
       });
 
-      const { error } = await supabaseClient
+      let { error } = await supabaseClient
         .from(t.name)
         .upsert(payload, { onConflict: t.pk });
+
+      // Si cash_movements en Supabase aún no tiene las columnas extendidas, reintentar con columnas base
+      if (error && t.name === 'cash_movements' && /column|schema cache/i.test(error.message)) {
+        const basePayload = payload.map(r => ({
+          id: r.id,
+          cash_cut_id: r.cash_cut_id,
+          terminal_code: r.terminal_code,
+          movement_type: r.movement_type,
+          amount: r.amount,
+          concept: r.concept,
+          user_name: r.user_name,
+          created_at: r.created_at,
+          updated_at: r.updated_at
+        }));
+        const retry = await supabaseClient.from(t.name).upsert(basePayload, { onConflict: t.pk });
+        error = retry.error;
+      }
 
       if (error) {
         console.warn(`[RESPALDO SUPABASE] Error en tabla ${t.name}:`, error.message);
@@ -1261,9 +1528,12 @@ module.exports = {
   registerStockEntry, registerShrinkage, getShrinkageHistory,
   lookupReceivingCode, receiveStock, receiveInvoice, isInvoiceReceived,
   getPackages, savePackage, deletePackage,
+  // Movimientos de caja
+  getCashMovements, saveCashMovement, deleteCashMovement,
   // turnos y ventas
   getTerminalShift, openTerminalShift, closeTerminalShift, registerCashMovement,
   processSale, cancelSale, getSales,
   // reportes y respaldo
-  getReports, getCashCut, createLocalSnapshot, getBackupStatus, performCloudBackup, setConfig, getConfig
+  getReports, getCashCut, createLocalSnapshot, getBackupStatus, performCloudBackup,
+  pullFromCloudSync, syncStartup, ensureStarterCatalog, setConfig, getConfig
 };

@@ -2,16 +2,21 @@
   "name": "pos-desktop",
   "version": "1.0.0",
   "description": "Sistema Punto de Venta (POS) con HTML, CSS, JS, Supabase y Capacitor",
-  "main": "www/index.html",
+  "main": "www/pos.html",
   "scripts": {
     "start": "node server.js",
     "server": "node server.js",
     "sync": "cap sync",
-    "open:android": "cap open android"
+    "open:android": "cap open android",
+    "electron:start": "npm --prefix electron start",
+    "electron:build": "npm --prefix electron run build",
+    "electron:pack": "npx cap sync && npm --prefix electron run pack",
+    "test": "node test/pos_unit_mock_test.js && node test/test_db_expert_concurrency.js && node test/test_sales_history_persistence.js && node test/test_promos_and_error_validation.js && node test/test_cash_movements.js && node test/test_cash_movements_expected_cash.js && node test/test_cash_movements_frontend.js && node test/test_ticket_cashier.js"
   },
   "dependencies": {
     "@capacitor/android": "^7.6.9",
     "@capacitor/core": "^7.6.9",
+    "@capawesome/capacitor-electron": "^0.2.2",
     "@supabase/supabase-js": "^2.48.1",
     "express": "^5.3.0",
     "html5-qrcode": "^2.3.8",
