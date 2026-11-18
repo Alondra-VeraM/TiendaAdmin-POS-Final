@@ -73,7 +73,20 @@ function createCashMovementsRouter({ localDb, supabase, resolveRequestUser }) {
           const payloadToCloud = { ...localResult.movement };
           delete payloadToCloud.rev;
           delete payloadToCloud.synced_rev;
-          await supabase.from('cash_movements').upsert([payloadToCloud], { onConflict: 'id' });
+          const { error: upErr } = await supabase.from('cash_movements').upsert([payloadToCloud], { onConflict: 'id' });
+          if (upErr && /column|schema cache/i.test(upErr.message)) {
+            await supabase.from('cash_movements').upsert([{
+              id: payloadToCloud.id,
+              cash_cut_id: payloadToCloud.cash_cut_id,
+              terminal_code: payloadToCloud.terminal_code,
+              movement_type: payloadToCloud.movement_type,
+              amount: payloadToCloud.amount,
+              concept: payloadToCloud.concept,
+              user_name: payloadToCloud.user_name,
+              created_at: payloadToCloud.created_at,
+              updated_at: payloadToCloud.updated_at
+            }], { onConflict: 'id' });
+          }
         } catch (cloudErr) {
           console.warn('Advertencia respaldando movimiento en Supabase (se sincronizará en respaldo periódico):', cloudErr.message);
         }

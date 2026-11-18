@@ -1322,6 +1322,7 @@ const PosDataService = {
   startVersionPolling(callback, intervalMs = 3000) {
     let lastVersion = null;
     let failedCount = 0;
+    let wasDisconnected = false;
     setInterval(async () => {
       // Si el backend local no responde, espaciar reintentos a 15s para no saturar la consola
       if (failedCount >= 2 && (Date.now() % 15000 > intervalMs)) {
@@ -1331,17 +1332,19 @@ const PosDataService = {
         const res = await localApi('/version');
         if (res.ok && res.data && res.data.version) {
           failedCount = 0;
-          if (lastVersion !== null && lastVersion !== res.data.version) {
+          const reconnected = wasDisconnected;
+          wasDisconnected = false;
+          if (lastVersion === null || reconnected || lastVersion !== res.data.version) {
             lastVersion = res.data.version;
             if (typeof callback === 'function') callback(res.data.version);
-          } else {
-            lastVersion = res.data.version;
           }
         } else {
           failedCount++;
+          wasDisconnected = true;
         }
       } catch (e) {
         failedCount++;
+        wasDisconnected = true;
       }
     }, intervalMs);
   },
@@ -1390,6 +1393,9 @@ if (typeof window !== 'undefined') {
   PosDataService.startVersionPolling(() => {
     if (typeof window.refreshInventoryFromSupabase === 'function') {
       window.refreshInventoryFromSupabase();
+    }
+    if (typeof window.refreshSalesFromSupabase === 'function') {
+      window.refreshSalesFromSupabase();
     }
     if (typeof window.checkShiftState === 'function') {
       window.checkShiftState();

@@ -29,6 +29,16 @@ CREATE TABLE IF NOT EXISTS public.cash_movements (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Asegurar columnas nuevas si la tabla ya existía de una versión previa
+ALTER TABLE public.cash_movements ADD COLUMN IF NOT EXISTS terminal_name VARCHAR(50) NOT NULL DEFAULT 'Caja 1';
+ALTER TABLE public.cash_movements ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES public.users(id);
+ALTER TABLE public.cash_movements ADD COLUMN IF NOT EXISTS user_name VARCHAR(100) NOT NULL DEFAULT 'Administrador';
+ALTER TABLE public.cash_movements ADD COLUMN IF NOT EXISTS concept VARCHAR(255) NOT NULL DEFAULT 'Movimiento de efectivo';
+ALTER TABLE public.cash_movements ADD COLUMN IF NOT EXISTS category VARCHAR(100) NOT NULL DEFAULT 'Otros';
+ALTER TABLE public.cash_movements ADD COLUMN IF NOT EXISTS payment_method VARCHAR(30) NOT NULL DEFAULT 'cash';
+ALTER TABLE public.cash_movements ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE public.cash_movements ADD COLUMN IF NOT EXISTS is_voided BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- 2. ÍNDICES DE RENDIMIENTO
 CREATE INDEX IF NOT EXISTS idx_cash_movements_type
 ON public.cash_movements(movement_type);

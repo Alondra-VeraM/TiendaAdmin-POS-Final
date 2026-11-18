@@ -1552,16 +1552,23 @@ body {
   transform: translateX(2px);
 }
 
+/* Tarjeta Unificada de Resumen y Total Neto */
+.settlement-summary-unified {
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+
 /* Cart Totals Breakdown (Subtotal, Descuentos, IVA) */
 .pos-cart-totals-breakdown {
   background-color: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: var(--radius-md);
+  border-bottom: 1px dashed #e2e8f0;
   padding: 10px 14px;
-  margin-bottom: 10px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
   font-size: 13px;
 }
 .totals-breakdown-row {
@@ -1588,14 +1595,13 @@ body {
   font-weight: 700 !important;
 }
 
-/* Total Net Box */
+/* Total Net Box (integrado dentro de la tarjeta única) */
 .total-net-card {
-  background-color: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: var(--radius-md);
+  background-color: transparent;
+  border: none;
   padding: 12px 16px;
   text-align: center;
-  margin-bottom: 12px;
+  margin-bottom: 0;
 }
 
 .total-net-label {
@@ -1628,13 +1634,13 @@ body {
   background-color: var(--green-primary);
   border: none;
   border-radius: var(--radius-md);
-  padding: 12px 18px;
+  padding: 13px 18px;
   color: #ffffff;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
   box-shadow: 0 4px 12px rgba(21, 128, 61, 0.28);
   transition: all 0.15s ease;
 }
@@ -1672,7 +1678,7 @@ body {
   letter-spacing: 0.3px;
 }
 
-/* Payment Methods */
+/* Payment Methods (Grid simétrico 2x2) */
 .payment-method-section {
   margin-bottom: 12px;
 }
@@ -1683,11 +1689,12 @@ body {
   letter-spacing: 0.6px;
   color: #64748b;
   margin-bottom: 8px;
+  text-transform: uppercase;
 }
 
 .payment-buttons-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 8px;
 }
 
@@ -1695,11 +1702,12 @@ body {
   background-color: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: var(--radius-md);
-  padding: 10px 6px;
+  padding: 10px 10px;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  gap: 8px;
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -1717,28 +1725,35 @@ body {
 }
 
 .payment-icon-wrap {
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
 }
 
 .payment-icon-wrap svg {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
 }
 
 .symbol-currency {
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 700;
   line-height: 1;
 }
 
 .payment-label {
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.services-panel-bottom {
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid #f1f5f9;
 }
 
 /* Cash note hint */

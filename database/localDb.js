@@ -1276,6 +1276,166 @@ function deleteCashMovement(id) {
   return cashMovementsModule.deleteCashMovement(id);
 }
 
+const STARTER_CATALOG = [
+  { barcode: '750101111521', sku: 'SAB-45', name: 'Sabritas Original Sal 45g', brand: 'Sabritas', category: 'Botanas y Frituras', cost: 12.50, price: 18.00, stock: 24, icon_type: 'snacks', promo_rule: null },
+  { barcode: '750185538472', sku: 'COCA-600', name: 'Coca-Cola Original 600ml', brand: 'Coca-Cola', category: 'Bebidas y Refrescos', cost: 14.00, price: 19.00, stock: 42, icon_type: 'soda', promo_rule: null },
+  { barcode: '750102054829', sku: 'LALA-1L', name: 'Leche Lala Entera 1L', brand: 'Lala', category: 'Lácteos y Huevos', cost: 21.00, price: 27.50, stock: 16, icon_type: 'milk', promo_rule: null },
+  { barcode: '750100011220', sku: 'BIMBO-GDE', name: 'Pan Blanco Bimbo Grande', brand: 'Bimbo', category: 'Panadería y Tortillería', cost: 32.00, price: 42.00, stock: 8, icon_type: 'bread', promo_rule: null },
+  { barcode: '750103912156', sku: 'NUTRI-850', name: 'Aceite Nutrioli 850ml', brand: 'Nutrioli', category: 'Despensa Básica', cost: 34.00, price: 45.00, stock: 3, icon_type: 'oil', promo_rule: null },
+  { barcode: '750102600450', sku: 'ZOTE-400', name: 'Jabón Zote Rosa 400g', brand: 'Zote', category: 'Limpieza y Hogar', cost: 15.00, price: 22.00, stock: 0, icon_type: 'soap', promo_rule: null },
+  { barcode: '750300049111', sku: 'HUEVO-18', name: 'Huevo Blanco San Juan 18pzs', brand: 'San Juan', category: 'Lácteos y Huevos', cost: 38.00, price: 49.00, stock: 14, icon_type: 'eggs', promo_rule: null },
+  { barcode: '750107130114', sku: 'FRIJOL-1KG', name: 'Frijol Negro Verde Valle 1kg', brand: 'Verde Valle', category: 'Despensa Básica', cost: 28.00, price: 36.00, stock: 22, icon_type: 'beans', promo_rule: null }
+];
+
+function ensureStarterCatalog() {
+  const d = initLocalDatabase();
+  const seeded = getConfig('starter_seeded');
+  const count = d.prepare('SELECT COUNT(*) c FROM products WHERE is_active = 1').get().c;
+  if (count > 0) {
+    if (!seeded) setConfig('starter_seeded', '1');
+    return { seeded: false, count };
+  }
+  if (seeded === '1') return { seeded: false, count: 0 };
+
+  return tx((dbTx) => {
+    const ins = dbTx.prepare(`
+      INSERT OR IGNORE INTO products (barcode, sku, name, brand, category, cost, price, stock, min_stock, icon_type, promo_rule, origin)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 5, ?, ?, 'starter')
+    `);
+    for (const p of STARTER_CATALOG) {
+      ins.run(p.barcode, p.sku, p.name, p.brand, p.category, p.cost, p.price, p.stock, p.icon_type, p.promo_rule);
+    }
+    dbTx.prepare("INSERT INTO app_config (key, value, updated_at) VALUES ('starter_seeded', '1', ?) ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at").run(nowIso());
+    return { seeded: true, count: STARTER_CATALOG.length };
+  });
+}
+
+async function pullFromCloudSync(supabaseClient) {
+  if (!supabaseClient) return { ok: false, reason: 'NO_SUPABASE' };
+  const d = initLocalDatabase();
+  const pulled = { products: 0, sales: 0, cash_cuts: 0, cash_movements: 0 };
+
+  try {
+    // 1. Productos desde Supabase (prioriza la nube si local no tiene cambios pendientes)
+    const { data: cloudProds, error: pErr } = await supabaseClient.from('products').select('*').order('id');
+    if (!pErr && Array.isArray(cloudProds) && cloudProds.length > 0) {
+      tx((dbTx) => {
+        for (const p of cloudProds) {
+          if (!p || !p.barcode || !p.name) continue;
+          const local = dbTx.prepare('SELECT id, rev, synced_rev, updated_at FROM products WHERE barcode = ?').get(String(p.barcode));
+          const promoText = p.promo_rule ? (typeof p.promo_rule === 'string' ? p.promo_rule : JSON.stringify(p.promo_rule)) : null;
+          if (!local) {
+            dbTx.prepare(`
+              INSERT OR IGNORE INTO products (barcode, sku, name, brand, category, cost, price, stock, min_stock, icon_type, promo_rule, origin, is_active, created_at, updated_at, rev, synced_rev)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
+            `).run(
+              String(p.barcode), p.sku || String(p.barcode), String(p.name), p.brand || null,
+              p.category || 'Abarrotes', Math.max(0, Number(p.cost) || 0), Math.max(0, Number(p.price) || 0),
+              Math.max(0, parseInt(p.stock, 10) || 0), Math.max(0, parseInt(p.min_stock, 10) || 5),
+              p.icon_type || 'bread', promoText, p.origin || 'cloud_sync', p.is_active === false ? 0 : 1,
+              p.created_at || nowIso(), p.updated_at || nowIso()
+            );
+            pulled.products++;
+          } else if (local.rev === local.synced_rev && p.updated_at && String(p.updated_at) > String(local.updated_at)) {
+            dbTx.prepare(`
+              UPDATE products SET sku=?, name=?, brand=?, category=?, cost=?, price=?, stock=?, min_stock=?, icon_type=?, promo_rule=?, is_active=?, updated_at=?, synced_rev=rev
+              WHERE id=?
+            `).run(
+              p.sku || String(p.barcode), String(p.name), p.brand || null, p.category || 'Abarrotes',
+              Math.max(0, Number(p.cost) || 0), Math.max(0, Number(p.price) || 0),
+              Math.max(0, parseInt(p.stock, 10) || 0), Math.max(0, parseInt(p.min_stock, 10) || 5),
+              p.icon_type || 'bread', promoText, p.is_active === false ? 0 : 1, p.updated_at, local.id
+            );
+            pulled.products++;
+          }
+        }
+      });
+    }
+
+    // 2. Cortes de caja históricos / recientes
+    const { data: cloudCuts, error: cErr } = await supabaseClient.from('cash_cuts').select('*').order('id');
+    if (!cErr && Array.isArray(cloudCuts) && cloudCuts.length > 0) {
+      tx((dbTx) => {
+        for (const c of cloudCuts) {
+          if (!c || !c.terminal_code) continue;
+          const exists = dbTx.prepare('SELECT id FROM cash_cuts WHERE id = ? OR (terminal_code = ? AND opened_at = ?)').get(c.id, c.terminal_code, c.opened_at);
+          if (!exists) {
+            if (c.status === 'open' && getOpenCut(dbTx, c.terminal_code)) continue;
+            dbTx.prepare(`
+              INSERT OR IGNORE INTO cash_cuts (
+                id, terminal_code, terminal_name, cashier_name, status, opened_at, closed_at, closed_by,
+                initial_fund, total_sales_count, total_sales_amount, cash_sales, card_sales, transfer_sales, mixed_sales,
+                cash_inflows, cash_outflows, supplier_payouts, expected_cash, counted_cash, difference, notes, updated_at, rev, synced_rev
+              ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            `).run(
+              c.id, c.terminal_code, c.terminal_name || (c.terminal_code === 'C2' ? 'Caja 2' : 'Caja 1'),
+              c.cashier_name || 'Administrador', c.status === 'closed' ? 'closed' : 'open',
+              c.opened_at || nowIso(), c.closed_at || null, c.closed_by || null,
+              Number(c.initial_fund) || 0, Number(c.total_sales_count) || 0, Number(c.total_sales_amount) || 0,
+              Number(c.cash_sales) || 0, Number(c.card_sales) || 0, Number(c.transfer_sales) || 0, Number(c.mixed_sales) || 0,
+              Number(c.cash_inflows) || 0, Number(c.cash_outflows) || 0, Number(c.supplier_payouts) || 0,
+              Number(c.expected_cash) || 0, c.counted_cash != null ? Number(c.counted_cash) : null,
+              c.difference != null ? Number(c.difference) : null, c.notes || null, c.updated_at || nowIso(), 1, 1
+            );
+            pulled.cash_cuts++;
+          }
+        }
+      });
+    }
+
+    // 3. Ventas e ítems faltantes desde Supabase
+    const { data: cloudSales, error: sErr } = await supabaseClient.from('sales').select('*').order('id', { ascending: false }).limit(200);
+    if (!sErr && Array.isArray(cloudSales) && cloudSales.length > 0) {
+      tx((dbTx) => {
+        for (const s of cloudSales) {
+          if (!s || !s.folio) continue;
+          const dup = dbTx.prepare('SELECT id FROM sales WHERE folio = ?').get(s.folio);
+          if (dup) continue;
+          let cutRow = s.cash_cut_id ? dbTx.prepare('SELECT id FROM cash_cuts WHERE id = ?').get(s.cash_cut_id) : null;
+          if (!cutRow) {
+            cutRow = dbTx.prepare('SELECT id FROM cash_cuts WHERE terminal_code = ? ORDER BY id DESC LIMIT 1').get(s.terminal_code || 'C1');
+          }
+          if (!cutRow) continue;
+          const info = dbTx.prepare(`
+            INSERT OR IGNORE INTO sales (
+              folio, cash_cut_id, terminal_code, terminal_name, cashier_name, total_items, total_pieces,
+              subtotal, discount, total_net, payment_method, cash_amount, card_amount, transfer_amount,
+              cash_received, cash_change, status, created_at, updated_at, rev, synced_rev
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1)
+          `).run(
+            s.folio, cutRow.id, s.terminal_code || 'C1', s.terminal_name || 'Caja 1', s.cashier_name || 'Cajero',
+            Math.max(1, Number(s.total_items) || 1), Math.max(1, Number(s.total_pieces) || 1),
+            Number(s.subtotal) || 0, Number(s.discount) || 0, Number(s.total_net) || 0,
+            PAYMENT_METHODS.includes(s.payment_method) ? s.payment_method : 'cash',
+            Number(s.cash_amount) || 0, Number(s.card_amount) || 0, Number(s.transfer_amount) || 0,
+            s.cash_received != null ? Number(s.cash_received) : null,
+            s.cash_change != null ? Number(s.cash_change) : null,
+            s.status === 'cancelled' ? 'cancelled' : 'completed',
+            s.created_at || nowIso(), s.updated_at || nowIso()
+          );
+          if (info.changes > 0) pulled.sales++;
+        }
+      });
+    }
+
+    setConfig('last_cloud_pull', nowIso());
+    return { ok: true, pulled };
+  } catch (err) {
+    console.warn('[SYNC CLOUD -> LOCAL] Advertencia:', err.message);
+    return { ok: false, error: err.message };
+  }
+}
+
+async function syncStartup(supabaseClient) {
+  initLocalDatabase();
+  const pullRes = await pullFromCloudSync(supabaseClient);
+  const seedRes = ensureStarterCatalog();
+  if (supabaseClient && seedRes && seedRes.seeded) {
+    try { await performCloudBackup(supabaseClient); } catch (_) {}
+  }
+  return { ok: true, pullRes, seedRes };
+}
+
 /**
  * Respaldo periódico incremental a Supabase (Plan Free)
  * Sube únicamente los registros modificados (rev > synced_rev) sin saturar conexiones ni cuotas
@@ -1304,9 +1464,26 @@ async function performCloudBackup(supabaseClient) {
         return copy;
       });
 
-      const { error } = await supabaseClient
+      let { error } = await supabaseClient
         .from(t.name)
         .upsert(payload, { onConflict: t.pk });
+
+      // Si cash_movements en Supabase aún no tiene las columnas extendidas, reintentar con columnas base
+      if (error && t.name === 'cash_movements' && /column|schema cache/i.test(error.message)) {
+        const basePayload = payload.map(r => ({
+          id: r.id,
+          cash_cut_id: r.cash_cut_id,
+          terminal_code: r.terminal_code,
+          movement_type: r.movement_type,
+          amount: r.amount,
+          concept: r.concept,
+          user_name: r.user_name,
+          created_at: r.created_at,
+          updated_at: r.updated_at
+        }));
+        const retry = await supabaseClient.from(t.name).upsert(basePayload, { onConflict: t.pk });
+        error = retry.error;
+      }
 
       if (error) {
         console.warn(`[RESPALDO SUPABASE] Error en tabla ${t.name}:`, error.message);
@@ -1357,5 +1534,6 @@ module.exports = {
   getTerminalShift, openTerminalShift, closeTerminalShift, registerCashMovement,
   processSale, cancelSale, getSales,
   // reportes y respaldo
-  getReports, getCashCut, createLocalSnapshot, getBackupStatus, performCloudBackup, setConfig, getConfig
+  getReports, getCashCut, createLocalSnapshot, getBackupStatus, performCloudBackup,
+  pullFromCloudSync, syncStartup, ensureStarterCatalog, setConfig, getConfig
 };
